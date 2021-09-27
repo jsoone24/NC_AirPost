@@ -8,6 +8,8 @@
 
 AirPost는 IoT 플랫폼과 UI를 이용하여 다수의 노드(station, drone, tag)들을 효과적으로 관리하면서, 기존의 서비스와는 다르게 개인 간 배송을 지원하고, 가벼운 물품 을 가까운 거리에서 빠르게 전달하는 것에 특화된 무인 드론 택배 서비스입니다.
 
+[시연동영상](https://youtu.be/zj5VMQE8P9Q)
+
 ## 전체 구성도
 
   <img src="./README.assets/structure.png"  width="800"/>
@@ -18,23 +20,23 @@ AirPost는 IoT 플랫폼과 UI를 이용하여 다수의 노드(station, drone, 
 
 - Drone
 
-  <img src="./README.assets/drone.png"  width="600"/>
+  <img src="./README.assets/drone.png"  width="800"/>
 
 - Station
 
-  <img src="./README.assets/station.png"  width="600"/>
+  <img src="./README.assets/station.png"  width="800"/>
 
 - AirPost Home UI
 
-<img src="./README.assets/ui_main.png"  width="600"/>
+  <img src="./README.assets/ui_main.png"  width="800"/>
 
 - Delivery Registration UI
 
-<img src="./README.assets/register_delivery.png"  width="600"/> 
+  <img src="./README.assets/register_delivery.png"  width="800"/> 
 
 - Realtime Package Tracking UI
 
-<img src="./README.assets/ui_tracking.png"  width="600"/>  
+  <img src="./README.assets/ui_tracking.png"  width="800"/>  
 
 ## 기능 요약
 
