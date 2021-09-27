@@ -1,7 +1,6 @@
 # 2021ESWContest_free_1139
-
-<img src="./README.assets/airpost_logo.png" width="300"/><img src="./README.assets/NCLab_logo.png" width="300"/>
-
+<p align="center"><img src="./README.assets/airpost_logo.png" width="500"/>
+  
 ## 소개
 
 안녕하세요 2021년 임베디드 소프트웨어 경진대회에 참가한 SCH팀 입니다.
@@ -97,3 +96,5 @@ AirPost는 IoT 플랫폼과 UI를 이용하여 다수의 노드(station, drone, 
    1. application 서버에 기기 등록 및 사용자 택배 등록 기능 구현
    2. 사용자가 택배를 등록할 시 발생하는 logic 및 event 발생 구현
    3. tracking 작업을 위한 health-check 서버 구현
+
+<p align="right"><img src="./README.assets/NCLab_logo.png" width="200"/>
