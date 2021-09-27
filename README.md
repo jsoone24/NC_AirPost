@@ -1,5 +1,7 @@
 # 2021ESWContest_free_1139
 
+<img src="./README.assets/airpost_logo.png" width="300"/><img src="./README.assets/NCLab_logo.png" width="300"/>
+
 ## 소개
 
 안녕하세요 2021년 임베디드 소프트웨어 경진대회에 참가한 SCH팀 입니다.
