@@ -1,0 +1,18 @@
+[submodule "AirPost"]
+	path = AirPost
+	url = https://github.com/SSU-NC-22/AirPost.git
+[submodule "AirPost_Drone"]
+	path = AirPost_Drone
+	url = https://github.com/SSU-NC-22/AirPost_Drone.git
+[submodule "AirPost_Sink"]
+	path = AirPost_Sink
+	url = https://github.com/SSU-NC-22/AirPost_Sink.git
+[submodule "AirPost_Station"]
+	path = AirPost_Station
+	url = https://github.com/SSU-NC-22/AirPost_Station.git
+[submodule "AirPost_UI"]
+	path = AirPost_UI
+	url = https://github.com/SSU-NC-22/AirPost_UI.git
+[submodule "docker-elasticsearch-kibana"]
+	path = docker-elasticsearch-kibana
+	url = https://github.com/SSU-NC-22/docker-elasticsearch-kibana.git
