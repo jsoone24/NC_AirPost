@@ -1,21 +1,31 @@
 # AirPost
 <p align="center"><img src="./README.assets/airpost_logo.png" width="500"/>
-  
+
 ## 소개
 
-안녕하세요 2021년 임베디드 소프트웨어 경진대회에 참가한 SCH팀 입니다.
+안녕하세요 숭실대학교 NCLab에 소속된 SCH팀 입니다.
 
 저희의 프로젝트명은 AirPost입니다.
 
-AirPost는 IoT 플랫폼과 UI를 이용하여 다수의 노드(station, drone, tag)들을 효과적으로 관리하면서, 기존의 서비스와는 다르게 개인 간 배송을 지원하고, 가벼운 물품 을 가까운 거리에서 빠르게 전달하는 것에 특화된 무인 드론 택배 서비스입니다.
-
-[시연동영상](https://youtu.be/zj5VMQE8P9Q)
+AirPost는 무인 드론 택배 서비스로, 일반 사람들이 택배 접수, 실시간 위치 추적, 발송 완료 알림과 같은 서비스를 이용할 수 있게 하며, 본 시스템을 운영하는 관리자는 시스템 내 기기들을 효과적으로 관리할 수 있도록 합니다.
 
 ## 전체 구성도
 
   <img src="./README.assets/structure.png"  width="800"/>
 
-드론, station 을 노드로 하여 서버가 IoT 플랫폼으로 작동한다. UI를 통해 AirPost가 제공하는 서비스를 보여준다.
+<p align="right"><img src="./README.assets/structure2.png" width="300"/></p>
+
+•IoT 플랫폼에서 가장 말단에 IoT 기기들인 Sensor Node가 있고, Drone과 Station 등이 이에 속한다. Drone은 실제로 비행하여 택배를 전달하는 비행체이고, Station은 Drone이 이착륙하는 공간이다.
+
+•Tag는 인쇄된 AprilTag로 구성된 드론이 택배를 전달하는 장소로, 전달 장소 노드로 등록된다.
+
+•Sink Node는 IoT기기에 적합한 가벼운 통신 방식인 MQTT를 사용하여 Sensor Node의 센서 데이터를 수집하고, TCP를 사용하여 수집한 데이터를 백엔드 서버인 Kafka 서버로 전송하는 중간 서버이다. Kafka는 Sink Node서버로부터 수집한 데이터를 병렬적으로 처리한다.
+
+•백엔드 서버는 센서 데이터를 보강하여 저장하고, 노드에게 명령을 내리거나 elastic stack에 보낸다. 또한, 프론트로부터 등록된 데이터를 MySQL 데이터베이스에 저장한다.
+
+•프론트는 서버로부터 받은 정보를 사용자 UI를 통해 보여주며, elastic stack을 통해 시각화 한다. 사용자의 요청이 들어온 경우에는 서버로 명령을 전달한다.
+
+
 
 ## 작품 사진
 
@@ -39,7 +49,7 @@ AirPost는 IoT 플랫폼과 UI를 이용하여 다수의 노드(station, drone, 
 
   <img src="./README.assets/ui_tracking.png"  width="800"/>  
 
-## 기능 요약
+## 기능 설명
 
 1. 관리자 기기 관리
    1. 관리자는 서비스를 제공하는데 필요한 노드(drone, station, tag)들을 UI에서 등록 및 삭제할 수 있으며, 그 결과는 데이터베이스에 저장된다.
@@ -97,4 +107,5 @@ AirPost는 IoT 플랫폼과 UI를 이용하여 다수의 노드(station, drone, 
    2. 사용자가 택배를 등록할 시 발생하는 logic 및 event 발생 구현
    3. tracking 작업을 위한 health-check 서버 구현
 
-<p align="right"><img src="./README.assets/NCLab_logo.png" width="200"/>
+<p align="right"><img src="./README.assets/NCLab_logo.png" width="200"/></p>
+
