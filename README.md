@@ -13,7 +13,7 @@ AirPost는 무인 드론 택배 서비스로, 일반 사람들이 택배 접수,
 
   <img src="./README.assets/structure.png"  width="800"/>
 
-<p align="right"><img src="./README.assets/structure2.png" width="300"/></p>
+<p align="center"><img src="./README.assets/structure2.png" width="300"/></p>
 
 •IoT 플랫폼에서 가장 말단에 IoT 기기들인 Sensor Node가 있고, Drone과 Station 등이 이에 속한다. Drone은 실제로 비행하여 택배를 전달하는 비행체이고, Station은 Drone이 이착륙하는 공간이다.
 
