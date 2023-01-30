@@ -6,7 +6,9 @@
 안녕하세요, 저희는 숭실대학교 NCLab에 소속된 SCH팀 입니다.
 
 AirPost는 무인 드론 택배 서비스로, 일반 사람들이 택배 접수, 실시간 위치 추적, 발송 완료 알림과 같은 서비스를 이용할 수 있게 하며, 본 시스템을 운영하는 관리자는 시스템 내 기기들을 효과적으로 관리할 수 있도록 합니다.
-
+  
+<br/>
+  
 Hello, we are the SCH team of Soongsil University NClab.
 
 AirPost is an unmanned drone courier service that enables the public to access services such as courier reception, real-time location tracking, and dispatch completion notifications, and allows administrators who operate the system to effectively manage devices in the system.
@@ -29,6 +31,8 @@ https://youtu.be/zj5VMQE8P9Q
 •백엔드 서버는 센서 데이터를 보강하여 저장하고, 노드에게 명령을 내리거나 elastic stack에 보낸다. 또한, 프론트로부터 등록된 데이터를 MySQL 데이터베이스에 저장한다.
 
 •프론트는 서버로부터 받은 정보를 사용자 UI를 통해 보여주며, elastic stack을 통해 시각화 한다. 사용자의 요청이 들어온 경우에는 서버로 명령을 전달한다.
+
+<br/>
 
 •SensorNode, which is IoT devices, is at the very end of the IoT platform, and Drone and Station are included. Drone is an aircraft that actually flies and delivers packages, and Station is a space where Drone takes off and lands.
 
@@ -86,6 +90,8 @@ https://youtu.be/zj5VMQE8P9Q
 6. 데이터 수집, 시각화
    1.  노드로부터 수집되는 센서 데이터들을 elastic stack을 이용하여 효과적 으로 수집, 저장 및 분석할 수 있다.
    2.  저장된 데이터들은 실시간에 가까운 속도로 검색, 집계가 가능하며, Kibana를 이용하여 그래프 등의 형태로 시각화 할 수 있다.
+
+<br/>
 
 1. Administrator Device Management
    1. The administrator can register and delete nodes (drone, station, tag) required to provide the service from the UI, and the results are stored in the database.
