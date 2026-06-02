@@ -127,10 +127,8 @@ takeoff → deliver → precision-land over the baylands terrain (in Gazebo / QG
 the live track on the UI map, and read the "delivered" email in MailHog. One MQTT order = one
 sortie.
 
-**Full step-by-step:** [`docs/RUNBOOK.md`](./docs/RUNBOOK.md).
-**Architecture + sequence diagrams:** [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md).
-**Kibana dashboard:** [`kibana/README.md`](./kibana/README.md).
-**Security checklist:** [`SECURITY.md`](./SECURITY.md).
+**Run it end to end (detailed operations guide):** [`docs/RUNBOOK.md`](./docs/RUNBOOK.md).
+**Security:** [`SECURITY.md`](./SECURITY.md). **Simulation:** [`simulation/README.md`](./simulation/README.md).
 
 > Tearing down: `docker compose -f AirPost_Backend/docker-compose.yml down` (add `-v` to drop volumes).
 
@@ -145,8 +143,11 @@ sortie.
 5. **Parcel tracking** — query by tracking number; source/dest/drone shown live on the UI map.
 6. **Data collection & viz** — sensor streams via Kafka → Elasticsearch → Kibana.
 
-For the original full bilingual project description (photos, sensor-network / frontend /
-backend breakdown), see the submodule READMEs and the project roadmap in
-[`ROADMAP.md`](./ROADMAP.md).
+For per-component detail (photos, sensor-network / frontend / backend breakdown), see the
+individual submodule READMEs.
+
+**Status:** the full loop is verified end to end in simulation — a UI/API order assigns a drone,
+the PX4+Gazebo drone flies the sortie (takeoff → winch delivery → AprilTag precision-land,
+≈0.1 m), live tracking and the "delivered" email both fire. See `docs/RUNBOOK.md`.
 
 <p align="right"><img src="./README.assets/NCLab_logo.png" width="200"/></p>

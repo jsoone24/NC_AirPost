@@ -65,4 +65,15 @@ deployment beyond a laptop, grouped by concern. Status reflects the current code
       toolchain at runtime).
 - [ ] Pin/scan base images and dependencies; rebuild for CVEs.
 
+## Past incidents (remediated)
+
+These were found in git history and **scrubbed via history rewrite + force-push** (verified 0
+occurrences across all submodule branches). Anyone who already saw them must still rotate the value:
+
+- **Leaked Gmail app password** (logic-core, in history) — removed; rotate the account password.
+- **Hardcoded Kakao Maps JS API key** (legacy UI) — removed; rotate in the Kakao console.
+- **Reverse-SSH backdoor host/IP** (drone + station scripts) — removed.
+- **Hardcoded plaintext login accounts** (legacy `ui/auth.js`) — removed; auth is now server-side
+  JWT, and the legacy `ui/` app has been retired in favour of `ui-next`.
+
 > Reporting: open a private security advisory on the repo rather than a public issue.
