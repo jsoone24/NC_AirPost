@@ -1,0 +1,18 @@
+<?xml version="1.0" ?>
+<!-- AirPost delivery zone: a red circle of radius 2 m painted on the ground (no tag).
+     The drone lowers the parcel by winch onto the GPS center of this circle. -->
+<sdf version="1.9">
+  <model name="airpost_delivery_zone">
+    <static>true</static>
+    <link name="link">
+      <visual name="disc">
+        <geometry><cylinder><radius>2.0</radius><length>0.02</length></cylinder></geometry>
+        <material>
+          <ambient>0.85 0.1 0.1 1</ambient>
+          <diffuse>0.9 0.12 0.12 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>

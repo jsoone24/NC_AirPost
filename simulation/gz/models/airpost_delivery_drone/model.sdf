@@ -1,0 +1,87 @@
+<?xml version="1.0" ?>
+<!-- AirPost delivery drone (KINEMATIC winch - the PROVEN-WORKING config):
+     - x500 quad
+     - downward camera  (AprilTag/ArUco precision landing)
+     - downward lidar rangefinder  (ground distance -> PX4 distance_sensor)
+     - winch: a fixed forward drum/hook VISUAL only. The parcel is NOT physically jointed
+       (a real-physics universal-swivel + DetachableJoint child tips the light airframe in
+       DART, which ignores <collide_bitmask>). Instead tests/parcel_manager.py owns a static,
+       collision-less parcel: it rides under the winch in flight and is lowered to the ground
+       at the delivery point via gz set_pose, with the cable drawn as a /marker. This keeps the
+       drone fully decoupled (spawns + flies LEVEL) and delivers reliably (DELIVER_ERR ~ 0.04 m).
+-->
+<sdf version="1.9">
+  <model name="airpost_delivery_drone">
+    <self_collide>false</self_collide>
+
+    <include merge="true">
+      <uri>x500</uri>
+    </include>
+
+    <!-- downward camera -->
+    <include merge="true">
+      <uri>model://mono_cam</uri>
+      <pose>0 0 .10 0 1.5707 0</pose>
+      <name>mono_cam</name>
+    </include>
+    <joint name="CameraJoint" type="fixed">
+      <parent>base_link</parent>
+      <child>camera_link</child>
+      <pose relative_to="base_link">0 0 0 0 1.5707 0</pose>
+    </joint>
+
+    <!-- downward lidar rangefinder (names must match PX4 gz_bridge: lidar_sensor_link / lidar) -->
+    <joint name="lidar_sensor_joint" type="fixed">
+      <parent>base_link</parent>
+      <child>lidar_sensor_link</child>
+    </joint>
+    <!-- mounted forward of centre so the downward beam clears the centred cable/parcel
+         (reads ground distance, not the slung load) -->
+    <link name="lidar_sensor_link">
+      <pose relative_to="base_link">0.22 0 -0.05 0 1.57 0</pose>
+      <inertial>
+        <mass>0.001</mass>
+        <inertia><ixx>0.00001</ixx><iyy>0.00001</iyy><izz>0.00001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+      </inertial>
+      <sensor name="lidar" type="gpu_lidar">
+        <gz_frame_id>lidar_sensor_link</gz_frame_id>
+        <pose>0 0 0 3.14 0 0</pose>
+        <update_rate>50</update_rate>
+        <ray>
+          <scan>
+            <horizontal><samples>1</samples><resolution>1</resolution><min_angle>0</min_angle><max_angle>0</max_angle></horizontal>
+            <vertical><samples>1</samples><resolution>1</resolution><min_angle>0</min_angle><max_angle>0</max_angle></vertical>
+          </scan>
+          <range><min>0.1</min><max>100.0</max><resolution>0.01</resolution></range>
+        </ray>
+        <always_on>1</always_on>
+        <visualize>false</visualize>
+      </sensor>
+    </link>
+
+    <!-- ===== Winch module (VISUAL only): a fixed forward drum + flanges on the frame. The cable
+         and parcel are drawn/positioned kinematically by tests/parcel_manager.py (see header). No
+         physical joint to a parcel - that decouples the load from the light airframe so it stays
+         level. ===== -->
+    <joint name="winch_mount_joint" type="fixed">
+      <parent>base_link</parent><child>winch_mount_link</child>
+    </joint>
+    <link name="winch_mount_link">
+      <pose relative_to="base_link">0.11 0 -0.005 0 0 0</pose>
+      <inertial><mass>0.03</mass>
+        <inertia><ixx>3e-5</ixx><iyy>3e-5</iyy><izz>3e-5</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial>
+      <visual name="mount_bracket"><pose>0 0 0 0 0 0</pose>
+        <geometry><box><size>0.045 0.07 0.04</size></box></geometry>
+        <material><ambient>0.12 0.12 0.13 1</ambient><diffuse>0.22 0.22 0.24 1</diffuse></material></visual>
+      <visual name="drum_visual"><pose>0 0 -0.012 1.5707 0 0</pose>
+        <geometry><cylinder><radius>0.02</radius><length>0.05</length></cylinder></geometry>
+        <material><ambient>0.05 0.05 0.06 1</ambient><diffuse>0.15 0.15 0.18 1</diffuse><specular>0.4 0.4 0.4 1</specular></material></visual>
+      <visual name="drum_flange_l"><pose>0 0.027 -0.012 1.5707 0 0</pose>
+        <geometry><cylinder><radius>0.026</radius><length>0.005</length></cylinder></geometry>
+        <material><ambient>0.2 0.2 0.2 1</ambient><diffuse>0.3 0.3 0.3 1</diffuse></material></visual>
+      <visual name="drum_flange_r"><pose>0 -0.027 -0.012 1.5707 0 0</pose>
+        <geometry><cylinder><radius>0.026</radius><length>0.005</length></cylinder></geometry>
+        <material><ambient>0.2 0.2 0.2 1</ambient><diffuse>0.3 0.3 0.3 1</diffuse></material></visual>
+    </link>
+  </model>
+</sdf>

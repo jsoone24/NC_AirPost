@@ -1,0 +1,23 @@
+<?xml version="1.0" ?>
+<!-- A teleportable downward gpu_lidar used to map the baylands terrain: set_pose it to
+     (x, y, high) across a grid and read /terrain_probe/scan; range gives the distance to the
+     first surface below (ground in a clearing, or tree canopy if obstructed). Used by
+     probe_terrain.py to place helipads exactly ON the rendered ground. -->
+<sdf version="1.9">
+  <model name="terrain_probe">
+    <static>true</static>
+    <link name="link">
+      <sensor name="down" type="gpu_lidar">
+        <pose>0 0 0 0 1.5708 0</pose>            <!-- beam +X rotated to point straight down -->
+        <topic>/terrain_probe/scan</topic>
+        <update_rate>20</update_rate>
+        <always_on>1</always_on>
+        <lidar>
+          <scan><horizontal><samples>1</samples><resolution>1</resolution>
+            <min_angle>0</min_angle><max_angle>0</max_angle></horizontal></scan>
+          <range><min>0.1</min><max>300</max><resolution>0.01</resolution></range>
+        </lidar>
+      </sensor>
+    </link>
+  </model>
+</sdf>

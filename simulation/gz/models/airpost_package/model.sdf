@@ -1,0 +1,21 @@
+<?xml version="1.0" ?>
+<!-- AirPost parcel (KINEMATIC): a 9 cm box, STATIC and with NO collision. It is positioned every
+     tick by tests/parcel_manager.py via gz set_pose - riding under the winch in flight, then
+     lowered to the delivery point. It must be static + collision-less because gz's DART engine
+     ignores <collide_bitmask>, so a colliding parcel box would shove the drone's frame collision
+     and tip the light airframe. No collision => no airframe tip, and set_pose can place it freely. -->
+<sdf version="1.9">
+  <model name="airpost_package">
+    <static>true</static>
+    <link name="package_link">
+      <visual name="package_visual">
+        <geometry><box><size>0.09 0.09 0.09</size></box></geometry>
+        <material>
+          <ambient>0.55 0.35 0.15 1</ambient>
+          <diffuse>0.72 0.45 0.20 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>
