@@ -12,9 +12,9 @@ jobs:
       fail-fast: false
       matrix:
         service:
-          - AirPost/application
-          - AirPost/logic-core
-          - AirPost/health-check
+          - AirPost_Backend/application
+          - AirPost_Backend/logic-core
+          - AirPost_Backend/health-check
     steps:
       - uses: actions/checkout@v4
         with:

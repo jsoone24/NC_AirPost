@@ -1,7 +1,7 @@
 # Kibana saved objects
 
 `airpost-sensor-dashboard.ndjson` is a Kibana **saved-objects** export (NDJSON,
-Kibana 7.6.x — matches the `kibana:7.6.1` image in `../AirPost/docker-compose.yml`).
+Kibana 7.6.x — matches the `kibana:7.6.1` image in `../AirPost_Backend/docker-compose.yml`).
 
 It contains:
 
@@ -17,7 +17,7 @@ It contains:
 Sink nodes publish sensor readings over MQTT → the **Sink** server forwards them to
 the Kafka **`sensor-data`** topic → **logic-core** consumes, enriches, runs rules, and
 **bulk-indexes** them into Elasticsearch under `airpost-*` indices. Kibana reads those
-indices. See `../README.md` and `../AirPost/logic-core`.
+indices. See `../README.md` and `../AirPost_Backend/logic-core`.
 
 > The dashboard is empty until at least one sensor reading has been indexed (i.e. the
 > Sink → Kafka → logic-core → Elasticsearch path has carried real data). Field names
@@ -25,7 +25,7 @@ indices. See `../README.md` and `../AirPost/logic-core`.
 
 ## Import
 
-With the stack up (`docker compose up` in `../AirPost`), Kibana is at
+With the stack up (`docker compose up` in `../AirPost_Backend`), Kibana is at
 http://localhost:5601.
 
 **UI:** Management → Saved Objects → **Import** → choose

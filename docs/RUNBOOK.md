@@ -18,7 +18,7 @@ same MQTT broker (`mosquitto:1883`) using the contract in that README.
 ## 1. Bring up the whole stack
 
 ```bash
-cd AirPost
+cd AirPost_Backend
 docker compose up --build -d
 docker compose ps        # wait until application, logic-core, health-check, ui-next are healthy/up
 ```
@@ -113,7 +113,7 @@ the map as the sortie progresses.
 ## Teardown
 
 ```bash
-cd AirPost
+cd AirPost_Backend
 docker compose down        # add -v to also drop the mysql / elasticsearch volumes
 ```
 

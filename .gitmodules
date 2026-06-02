@@ -1,6 +1,6 @@
 [submodule "AirPost"]
-	path = AirPost
-	url = https://github.com/SSU-NC-22/AirPost.git
+	path = AirPost_Backend
+	url = https://github.com/SSU-NC-22/AirPost_Backend.git
 [submodule "AirPost_Drone"]
 	path = AirPost_Drone
 	url = https://github.com/SSU-NC-22/AirPost_Drone.git

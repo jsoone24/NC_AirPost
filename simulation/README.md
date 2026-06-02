@@ -174,7 +174,7 @@ persistent flight agent, then drive it from the UI or MQTT:
 cd /Users/js/ws/NC_AirPost/simulation
 ./run_airpost_live.sh         # opens the Gazebo GUI; wait for "AGENT READY"
 ```
-With the backend stack up (`cd AirPost && docker compose up -d`), register a parcel in the UI
+With the backend stack up (`cd AirPost_Backend && docker compose up -d`), register a parcel in the UI
 (http://localhost:4173) — the order flows over MQTT to the agent and the drone takes off in
 ~2 s, flies, winch-delivers, and precision-lands. Or publish a request directly:
 ```bash

@@ -17,7 +17,7 @@ flowchart LR
     UI["ui-next (Vite/React)\n:4173"]
   end
 
-  subgraph Backend["Go backend (AirPost/)"]
+  subgraph Backend["Go backend (AirPost_Backend/)"]
     APP["application\n:8081 REST"]
     LC["logic-core\n:8084"]
     HC["health-check\n:8083 / WS :8085"]

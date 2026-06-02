@@ -23,7 +23,7 @@ UI  (register parcel)
  │   AirPost_UI/ui — React
  ▼
 backend  POST /regist/delivery        (pick station + route)
- │   AirPost/application — Go, :8081 (MySQL)
+ │   AirPost_Backend/application — Go, :8081 (MySQL)
  ▼
 MQTT  (flight path / delivery request)
  ▼
@@ -35,9 +35,9 @@ PX4 SITL  (22 takeoff → 16 goto → 21 land)   ── visualized in QGroundCon
  ▼
 "delivered" event
  ├──► logic-core email action  ──►  MailHog  (dev mailserver captures the email)
- │     AirPost/logic-core — Go, :8084
+ │     AirPost_Backend/logic-core — Go, :8084
  └──► live drone coords  ──►  health-check WebSocket  ──►  UI map
-       AirPost/health-check — Go, :8083
+       AirPost_Backend/health-check — Go, :8083
 ```
 
 Sensor data takes a parallel path: sink nodes publish over MQTT, a **Sink** server forwards
@@ -68,7 +68,7 @@ flowchart LR
 
 | Path | What it is |
 |---|---|
-| `AirPost/` | Go backend: `application` (REST + DB), `logic-core` (Kafka/ES/email rules), `health-check` (WS tracking) |
+| `AirPost_Backend/` | Go backend: `application` (REST + DB), `logic-core` (Kafka/ES/email rules), `health-check` (WS tracking) |
 | `AirPost_UI/` | React frontend (admin dashboard + user parcel flow + tracking map) |
 | `AirPost_Drone/` | On-drone ROS code: `drone_controller` (MAVROS), MQTT bridge |
 | `AirPost_Sink/` | Sink node: MQTT → Kafka forwarder |
@@ -96,7 +96,7 @@ cd NC_AirPost
 and the UI:
 
 ```bash
-cd AirPost
+cd AirPost_Backend
 docker compose up --build -d
 docker compose ps        # wait for application / logic-core / health-check / ui-next
 ```
@@ -132,7 +132,7 @@ sortie.
 **Kibana dashboard:** [`kibana/README.md`](./kibana/README.md).
 **Security checklist:** [`SECURITY.md`](./SECURITY.md).
 
-> Tearing down: `docker compose -f AirPost/docker-compose.yml down` (add `-v` to drop volumes).
+> Tearing down: `docker compose -f AirPost_Backend/docker-compose.yml down` (add `-v` to drop volumes).
 
 ---
 

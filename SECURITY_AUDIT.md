@@ -6,11 +6,11 @@ Read-only audit of the repo + submodules. Status per finding below.
 ## CRITICAL
 
 ### 1. Leaked Gmail app password in git history
-- **Where:** `AirPost/logic-core/logicService/logic/action.go`, commit `924f101` (also `22cd92e`), reachable from HEAD. Value `<REDACTED-app-password>` next to `<redacted-email>`.
+- **Where:** `AirPost_Backend/logic-core/logicService/logic/action.go`, commit `924f101` (also `22cd92e`), reachable from HEAD. Value `<REDACTED-app-password>` next to `<redacted-email>`.
 - **Working tree:** ✅ already env-driven (`SMTP_PASS`); no plaintext remains in current source.
 - ⚠️ **USER ACTION:** the secret is permanent in git history.
   1. **Revoke/rotate** that Gmail app password in the Google account NOW.
-  2. Purge from history: `git filter-repo --replace-text <(echo '<REDACTED-app-password>==>REDACTED')` (or BFG), in the `AirPost`/`logic-core` repo that holds the history, then **force-push** and have collaborators re-clone.
+  2. Purge from history: `git filter-repo --replace-text <(echo '<REDACTED-app-password>==>REDACTED')` (or BFG), in the `AirPost_Backend`/`logic-core` repo that holds the history, then **force-push** and have collaborators re-clone.
 
 ### 2. Reverse-SSH backdoor / persistent tunnel
 - **Where:** `AirPost_Drone/scripts/reverse_ssh_continuous.sh` and `AirPost_Station/scripts/reverse_ssh_continuous.sh` — reverse tunnels exposing local :22/:80 to a hardcoded host `jongsoo@<REDACTED-host>:9709`.
@@ -21,7 +21,7 @@ Read-only audit of the repo + submodules. Status per finding below.
 
 ### 3. Hardcoded client-side login credentials (legacy UI)
 - **Where:** `AirPost_UI/ui/src/LoginInfo/auth.js` — plaintext user/password list shipped in the client bundle.
-- ✅ **Fixed:** credential list removed; replaced with a pointer to server-side JWT auth (`AirPost/application/rest/handler/auth.go` + new `ui-next` `src/lib/api.ts`). The legacy `ui/` is being retired by `ui-next/`.
+- ✅ **Fixed:** credential list removed; replaced with a pointer to server-side JWT auth (`AirPost_Backend/application/rest/handler/auth.go` + new `ui-next` `src/lib/api.ts`). The legacy `ui/` is being retired by `ui-next/`.
 
 ### 4. Hardcoded Kakao Maps JS API key (legacy UI)
 - **Where:** `AirPost_UI/ui/.env.development` — real key committed (`5cffce3a…`).
@@ -35,7 +35,7 @@ Read-only audit of the repo + submodules. Status per finding below.
 
 ## MEDIUM (design hardening — tracked, not blocking the dev demo)
 
-- **6. DB default creds in compose** (`AirPost/docker-compose.yml`, `airpost`/`airpost`): fine for throwaway dev; require env-provided secrets for any real deployment (no in-file defaults).
+- **6. DB default creds in compose** (`AirPost_Backend/docker-compose.yml`, `airpost`/`airpost`): fine for throwaway dev; require env-provided secrets for any real deployment (no in-file defaults).
 - **7. Services bind 0.0.0.0; ES/Kibana/Kafka host-published:** for non-dev, default-bind to `127.0.0.1`/private iface and keep ES/Kibana/Kafka inside the compose network (not host-published).
 - **8. Unauthenticated inter-service HTTP** (logic-core → sink `/actuator`,`/drone` over plain HTTP): add service-to-service auth + TLS on a private network.
 
