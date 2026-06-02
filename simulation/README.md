@@ -241,3 +241,18 @@ The downward camera streams on
 `/world/airpost/model/airpost_delivery_drone_0/link/camera_link/sensor/imager/image`.
 Next: feed it to an AprilTag/ArUco detector -> MAVLink `LANDING_TARGET` -> PX4 PrecLand,
 so the final landing aligns to the station marker via vision (not just GPS).
+
+## Multi-drone (experimental) — `run_airpost_fleet.sh` + `fleet_demo.py`
+Scaffolding to fly several drones in ONE Gazebo world via PX4 multi-vehicle SITL:
+
+```bash
+GUI=0 ./run_airpost_fleet.sh 2     # 1 gz server + N px4 instances (standalone) + concurrent flight
+```
+
+It starts one gz server, then launches N px4 instances with `PX4_GZ_STANDALONE=1` (each spawns
+`airpost_delivery_drone_<i>` and exposes MAVSDK on `udp 14540+i`); `fleet_demo.py` connects to all
+N and flies them at once. **Known blocker:** the shared drone model's internal frames (`base_link`,
+etc.) are not unique across instances, so spawning a 2nd copy fails with gz
+`FrameAttachedToGraph ... base_link not unique` and that instance gets no sensor bridge. Making the
+model's links/frames per-instance unique (model-scoped) is the remaining work. Single-drone
+(`run_airpost_live.sh`) is unaffected and is the verified, stable path.
