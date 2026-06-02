@@ -44,25 +44,36 @@ curl -s -X POST "http://localhost:5601/api/saved_objects/_import?overwrite=true"
   -H "kbn-xsrf: true" --form file=@../kibana/airpost-sensor-dashboard.ndjson
 ```
 
-## 3. Start the live sim + flight agent (native)
+## 3. Start the sim (native)
 
-In a real Terminal (so the Gazebo window can open):
+In a real Terminal (so the Gazebo window can open). Two modes:
+
+### 3a. Multi-drone fleet (recommended — matches the seeded 8-station topology)
 
 ```bash
 cd ../simulation
-./run_airpost_live.sh                       # PX4 SITL + Gazebo GUI + winch manager + detector + flight agent
+SERVICE=1 ./run_airpost_fleet.sh 8          # 8 drones in one Gazebo world + MQTT delivery service
+# wait for "fleet service: 8 drones connected; waiting for orders"
+# GUI=0 for headless; SERVICE=1 selects the MQTT-driven service (default just demos take-off/land)
+```
+
+`run_airpost_fleet.sh` starts one Gazebo server holding the world, spawns N PX4 instances at
+the seeded station helipads (distinct positions), then runs `fleet_service.py`. The service
+holds one MAVSDK link per drone, routes each order to the named drone by `drone_id`, and flies
+takeoff → (ferry to pickup) → drop → land-at-nearest-station concurrently — each at the cruise
+altitude band the backend assigned, so airborne drones never share an altitude. It also streams
+live drone telemetry and station sensors to Kafka (see §8). Override the broker with `MQTT_BROKER`.
+
+### 3b. Single-drone showcase (winch + AprilTag precision landing)
+
+```bash
+cd ../simulation
+./run_airpost_live.sh                       # GUI sim + winch manager + AprilTag detector + flight agent
 # wait for "AGENT READY"
 ```
 
-`run_airpost_live.sh` launches the GUI sim plus the persistent flight agent
-(`tests/airpost_flight_agent.py`). The agent holds one long-lived MAVSDK connection,
-subscribes to `airpost/delivery/request` on the broker, and flies a full autonomous sortie
-per order (lift-off in ~2 s), streaming status on `airpost/delivery/status`. It defaults to
-the compose broker; override with `MQTT_BROKER`:
-
-```bash
-MQTT_BROKER=localhost ./run_airpost_live.sh
-```
+This persistent agent (`tests/airpost_flight_agent.py`) flies one drone with the full
+winch-lowered parcel and AprilTag precision landing. Use it for the close-up single-drone demo.
 
 ## 4. Register a parcel
 
@@ -73,8 +84,10 @@ Under the hood the UI calls `POST /regist/delivery` on `application:8081`. The
 application picks a station + route and publishes a flight request to MQTT
 (`airpost/delivery/request`), which the simulator's flight agent consumes.
 
-Equivalent without the UI (this exact call is verified end-to-end — seeded source station 1,
-destination tag 30):
+The seed lays down 8 stations (ids 1–8), one drone parked on each (ids 51–58) and one drop tag
+per station (ids 31–38). The dispatcher picks the nearest free drone (ferrying one in if the
+source station is empty), lands it at the station nearest the drop, and gives each concurrent
+mission its own altitude band. Equivalent without the UI (source station 1, drop tag 32):
 
 ```bash
 TOKEN=$(curl -s -X POST http://localhost:8081/auth/login \
@@ -85,8 +98,8 @@ curl -s -X POST http://localhost:8081/regist/delivery \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"email":"demo@airpost.local",
        "src_name":"Alice","src_phone":"010-1111-2222","src_station_id":1,
-       "dest_name":"Bob","dest_phone":"010-3333-4444","dest_tag_id":30}'
-# -> {"order_num":"AP...","drone_id":50,...}  and the sim drone lifts off within ~2 s
+       "dest_name":"Bob","dest_phone":"010-3333-4444","dest_tag_id":32}'
+# -> {"order_num":"AP...","drone_id":51,...}  and that drone flies the sortie
 ```
 
 ## 5. Watch the sim deliver
@@ -112,6 +125,23 @@ In the UI open **Track / `/track/<trackingNumber>`**. The page opens the health-
 WebSocket (`ws://localhost:8085/health-check`) and plots the live drone coordinates on
 the map as the sortie progresses.
 
+## 8. Telemetry → sink → Elasticsearch
+
+With the fleet service running (§3a) every drone's live position/battery and every station's
+(simulated) environmental sensors are produced to the Kafka `sensor-data` topic. `logic-core`
+consumes them, maps each value array onto the node's sensor schema and archives a document per
+reading into Elasticsearch — one index per node and sink:
+
+```bash
+curl -s "http://localhost:9200/_cat/indices/airpost*?h=index,docs.count&s=index"
+# airpost-1-drone-sink, airpost-1-station-sink, ... airpost-8-drone-sink, airpost-8-station-sink
+
+curl -s "http://localhost:9200/airpost-1-drone-sink/_search?size=1" | python3 -m json.tool
+# values: {lat, long, alt, velocity, batteryper, done}, node{...}, timestamp
+```
+
+Explore the same data in Kibana (http://localhost:5601 → Discover / Dashboard).
+
 ## Teardown
 
 ```bash
@@ -129,8 +159,8 @@ docker compose down        # add -v to also drop the mysql / elasticsearch volum
   (`admin@airpost.local`) — admin endpoints require the admin JWT. If it still fails right after a
   backend change, the browser may be holding a stale **CORS preflight** (cached up to 12 h): open
   an **incognito window** or clear site data. (curl works regardless because it skips CORS.)
-- **Sensors tab shows "application not found":** the embed URL must be the Kibana 7.6 path
-  `http://localhost:5601/app/kibana#/dashboards` (set `VITE_KIBANA_URL` to override).
+- **Kibana shows no AirPost data:** the indices appear only once the fleet service streams
+  telemetry (§8). Create a data view for `airpost-*` in Kibana, then use Discover.
 - **A Go service restarts / unhealthy:** `docker compose logs -f application` (or `logic-core` /
   `health-check`). Confirm `mysql` / `kafka` / `elasticsearch` became healthy first.
 - **No email:** check `logic-core` / `application` logs for SMTP errors; confirm
