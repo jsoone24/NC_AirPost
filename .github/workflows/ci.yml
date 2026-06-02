@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  go:
+    name: Go (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - AirPost/application
+          - AirPost/logic-core
+          - AirPost/health-check
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: true
+          cache-dependency-path: ${{ matrix.service }}/go.sum
+
+      - name: go build
+        working-directory: ${{ matrix.service }}
+        run: go build ./...
+
+      - name: go vet
+        working-directory: ${{ matrix.service }}
+        run: go vet ./...
+
+      - name: go test
+        working-directory: ${{ matrix.service }}
+        run: go test ./...
+
+  frontend:
+    name: Frontend build (ui-next)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: AirPost_UI/ui-next
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Build
+        # `npm run build` runs `tsc -b && vite build` (type-check + production bundle).
+        run: npm run build
+
+  sim:
+    name: Simulation logic
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test deps
+        run: pip install pytest
+
+      - name: Sim logic tests (gz-free)
+        # Fast, deterministic guards for world generation + the ENU<->NED frame
+        # conversion. No PX4/Gazebo/GL needed, so they run in milliseconds and
+        # actually gate the pipeline.
+        run: python -m pytest simulation/tests/test_sim_logic.py -q
+
+      # The full mission harness (test_mission.py) drives PX4 SITL + Gazebo
+      # Harmonic, which need a GL context + ~400 MB of Fuel assets and are not
+      # installable on a standard runner in reasonable time. It is gated behind
+      # RUN_SIM and only runs on a sim-capable (self-hosted / llvmpipe) runner.
+      - name: Full mission harness (RUN_SIM=true on a gz-capable runner only)
+        if: ${{ vars.RUN_SIM == 'true' }}
+        run: |
+          export LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe
+          pip install pymavlink mavsdk opencv-python
+          python -m pytest simulation/tests/test_mission.py -s
