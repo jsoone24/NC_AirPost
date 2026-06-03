@@ -40,7 +40,9 @@ STATUS_TOPIC = "airpost/delivery/status"
 # Backend drone node ids start at DRONE_ID_BASE+1 (seed.go: droneIDBase=50 -> drone 51 on station 1),
 # so fleet instance i flies backend drone DRONE_ID_BASE+1+i.
 DRONE_ID_BASE = 50
-DELIVER_ALT = 6.0  # metres above ground to hover while dropping the parcel
+WINCH_HEIGHT = 10.0  # metres above the snapped drop-pad ground while lowering the parcel
+WINCH_TIMEOUT = 60.0
+WINCH_POLL = 0.5
 LAND_ALT = 1.0     # metres to descend to before handing off to PX4's land
 PRECLAND_ALT = 3.0
 PRECISION_LANDING = os.environ.get("PRECISION_LANDING", "1") != "0"
@@ -65,7 +67,48 @@ def en_to_latlon(east, north):
 
 def stations():
     """Map station id -> {E, N, Z, ...} from the shared sites file."""
-    return {s["id"]: s for s in json.load(open(SITES))["stations"]}
+    return load_sites()[0]
+
+
+def load_sites():
+    """Load stations and drop-pad sites from simulation/tests/airpost_sites.json once at startup."""
+    data = json.load(open(SITES))
+    return {s["id"]: s for s in data["stations"]}, data.get("sites", [])
+
+
+def nearest_site(sites, world_n, world_e):
+    """Snap a requested world N/E drop point to the nearest prepared drop pad."""
+    return min(sites, key=lambda s: math.hypot(s["E"] - world_e, s["N"] - world_n)) if sites else None
+
+
+# ---- collision avoidance (control tower) -----------------------------------------------------
+# No two drones may EVER collide. Two layers:
+#   1) altitude bands separate the cruise leg (assigned by the backend; distinct per mission).
+#   2) every contested GROUND point (a drop pad or a landing station) is an exclusive lock: a drone
+#      must hold it to descend there. If it is taken, the drone WAITS — holding off to one side at
+#      its own cruise altitude (distinct band + sideways offset, so waiters never stack on the point
+#      or on the descending drone) — until the point frees, then descends. So at most one drone is
+#      ever in a point's descent column, and everyone else is vertically/laterally separated.
+_point_locks = {}
+
+
+def point_lock(kind, key):
+    k = (kind, key)
+    if k not in _point_locks:
+        _point_locks[k] = asyncio.Lock()
+    return _point_locks[k]
+
+
+def winch_go(inst):
+    return f"/tmp/airpost_winch_go_{inst}"
+
+
+def winch_done(inst):
+    return f"/tmp/airpost_winch_done_{inst}"
+
+
+def winch_ground(inst):
+    return f"/tmp/airpost_winch_ground_{inst}"
 
 
 class Drone:
@@ -114,6 +157,26 @@ class Drone:
         height would miss the ground (hover above it, or drive into it and never disarm). Correcting
         by the station's elevation makes the descent land cleanly regardless of where it set off from."""
         return (station_z - self.spawn_z) + height
+
+    def _side_offset(self):
+        """A per-drone sideways hold position (local NED metres). Distinct direction per instance so
+        drones waiting for the same contested point fan out instead of stacking on each other."""
+        ang = self.inst * 1.4  # radians; spreads instances around the circle
+        r = 18.0
+        return r * math.cos(ang), r * math.sin(ang)
+
+    async def _acquire_point(self, lock, dn, de, cruise, pub, what):
+        """Acquire the exclusive lock for a ground point (drop pad / landing station) before descending
+        into its airspace. If another drone holds it, WAIT off to the side at our cruise band until it
+        frees — never descend into an occupied column. Returns with the lock held."""
+        if not lock.locked():
+            await lock.acquire()
+            return
+        on, oe = self._side_offset()
+        pub(f"holding_{what}")
+        print(f"drone {self.inst}: {what} point busy -> holding to the side", flush=True)
+        await self._go_to(dn + on, de + oe, cruise, z_tol=2.0)  # step aside at our band
+        await lock.acquire()                                    # offboard stream holds us there meanwhile
 
     async def telemetry(self):
         """Snapshot for the sink: [lat, long, alt, velocity, batteryPer, done] (seed.go drone schema)."""
@@ -291,14 +354,77 @@ class Drone:
             await asyncio.sleep(0.5)
         return False, math.hypot(pn - ln, pe - le)
 
-    async def fly(self, req, st, pub):
-        """Fly one order: takeoff -> (ferry to pickup) -> drop -> land at nearest station."""
+    async def _deliver(self, req, st, sites, cruise, pub):
+        """Fly to the snapped drop-pad site, lower this drone's parcel by winch, then climb away."""
+        pickup = st[int(req.get("pickup_id", req["takeoff_id"]))]
+        requested_n = pickup["N"] + float(req["deliver_N"])
+        requested_e = pickup["E"] + float(req["deliver_E"])
+        site = nearest_site(sites, requested_n, requested_e)
+        if site is not None:
+            drop_n, drop_e = site["N"], site["E"]
+            pad_ground_z = site.get("Z", pickup.get("Z", 0.0))
+            lock_key = ("site", site.get("id"))
+        else:
+            drop_n, drop_e = requested_n, requested_e
+            pad_ground_z = pickup.get("Z", 0.0)
+            lock_key = ("drop", round(drop_n, 1), round(drop_e, 1))
+        print(f"drone {self.inst}: delivery -> drop {lock_key} N{drop_n:.1f} E{drop_e:.1f} z={pad_ground_z:.2f}", flush=True)
+
+        dn, de = self.ned(drop_n, drop_e)
+        await self._go_to(dn, de, cruise, z_tol=2.0)              # arrive over the drop at our band
+
+        # Exclusive use of the drop column: hold to the side if another drone is delivering here.
+        lock = point_lock(*lock_key)
+        await self._acquire_point(lock, dn, de, cruise, pub, "drop")
+        lowered = False
+        try:
+            await self._go_to(dn, de, cruise, z_tol=2.0)          # re-center over the drop
+            await self._go_to(dn, de, self.agl(pad_ground_z, WINCH_HEIGHT), z_tol=0.8)
+            await asyncio.sleep(2)
+
+            go_file, done_file, ground_file = winch_go(self.inst), winch_done(self.inst), winch_ground(self.inst)
+            try:
+                os.remove(done_file)
+            except OSError:
+                pass
+            with open(ground_file, "w") as f:
+                f.write(str(pad_ground_z))
+            with open(go_file, "w") as f:
+                f.write("go")
+            pub("lowering_cable")
+
+            deadline = asyncio.get_event_loop().time() + WINCH_TIMEOUT
+            while asyncio.get_event_loop().time() < deadline:
+                if os.path.exists(done_file):
+                    lowered = True
+                    break
+                await asyncio.sleep(WINCH_POLL)
+            try:
+                os.remove(go_file)
+            except OSError:
+                pass
+            if not lowered:
+                print(f"drone {self.inst}: winch lower timed out after {WINCH_TIMEOUT:.0f}s", flush=True)
+            await asyncio.sleep(1.5)
+
+            pn, pe, _ = await self.pos()
+            deliver_err = math.hypot(pn - dn, pe - de) if lowered else 99.0
+            await self._go_to(dn, de, cruise, z_tol=2.0)          # climb back, clearing the drop column
+        finally:
+            lock.release()                                        # free the drop pad for the next drone
+        return deliver_err, lowered
+
+    async def fly(self, req, st, sites, pub):
+        """Fly one order: takeoff -> optional pickup ferry -> winch delivery -> precision landing."""
         cruise = float(req.get("cruise", 30))
-        takeoff = st[int(req["takeoff_id"])]
-        pickup = st[int(req["pickup_id"])]
+        pickup_id = int(req.get("pickup_id", req["takeoff_id"]))
         landing = st[int(req["landing_id"])]
-        drop_n = pickup["N"] + float(req["deliver_N"])
-        drop_e = pickup["E"] + float(req["deliver_E"])
+
+        for path in (winch_go(self.inst), winch_done(self.inst)):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
 
         pub("launching")
         if not await self._takeoff(cruise):
@@ -306,27 +432,31 @@ class Drone:
             return
 
         # Ferry leg: if the drone lifted off somewhere other than the parcel's source, fly there first.
-        if int(req["takeoff_id"]) != int(req["pickup_id"]):
+        if int(req["takeoff_id"]) != pickup_id:
+            pickup = st[pickup_id]
             pub("enroute_pickup")
             pn, pe = self.ned(pickup["N"], pickup["E"])
             await self._go_to(pn, pe, cruise, z_tol=2.0)
 
         pub("enroute_delivery")
-        dn, de = self.ned(drop_n, drop_e)
-        await self._go_to(dn, de, cruise, z_tol=2.0)                       # cruise to the drop point
-        await self._go_to(dn, de, self.agl(pickup.get("Z", 0.0), DELIVER_ALT))  # descend to winch height
-        await asyncio.sleep(2)
-        derr = math.hypot(*[a - b for a, b in zip(await self.pos(), (dn, de))][:2])
+        derr, lowered = await self._deliver(req, st, sites, cruise, pub)
         pub("delivered", deliver_err=round(derr, 2))
 
         pub("enroute_landing")
         ln, le = self.ned(landing["N"], landing["E"])
-        await self._go_to(ln, le, cruise, z_tol=2.0)   # climb back + transit to the landing station
-        if PRECISION_LANDING:
-            pub("precision_landing")
-        landed, lerr = await self._land_here(ln, le, landing)
+        await self._go_to(ln, le, cruise, z_tol=2.0)             # arrive over the landing station at our band
+        # Exclusive use of the landing column: hold to the side if another drone is landing here.
+        land_lock = point_lock("land", int(req["landing_id"]))
+        await self._acquire_point(land_lock, ln, le, cruise, pub, "landing")
+        try:
+            await self._go_to(ln, le, cruise, z_tol=2.0)         # re-center over the station
+            if PRECISION_LANDING:
+                pub("precision_landing")
+            landed, lerr = await self._land_here(ln, le, landing)
+        finally:
+            land_lock.release()                                  # free the station for the next drone
 
-        ok = derr < 3.0 and landed
+        ok = lowered and derr < 3.0 and landed
         pub("done" if ok else "failed", result="PASS" if ok else "FAIL",
             deliver_err=round(derr, 2), land_err=round(lerr, 2))
         print(f"drone {self.inst}: deliver_err={derr:.2f} land_err={lerr:.2f} "
@@ -377,7 +507,7 @@ def make_producer():
 
 
 async def serve(n):
-    st = stations()
+    st, sites = load_sites()
     # Instance i parks on station i+1 (matches run_airpost_fleet.sh spawn order and seed.go).
     drones = [Drone(i, st[i + 1]["N"], st[i + 1]["E"], st[i + 1].get("Z", 0.0)) for i in range(n)]
     # Stagger the connects: each System() spawns its own mavsdk_server, and starting 8 at once races
@@ -419,7 +549,7 @@ async def serve(n):
         async with dr.lock:
             pub("accepted")
             try:
-                await dr.fly(req, st, pub)
+                await dr.fly(req, st, sites, pub)
             except Exception as e:
                 pub("failed", result="FAIL")
                 print(f"drone {inst}: sortie error {e!r}", flush=True)

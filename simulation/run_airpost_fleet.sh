@@ -32,12 +32,16 @@ export GZ_SIM_RESOURCE_PATH="$SIMDIR/gz/models:$SIMDIR/gz/worlds:$PX4/Tools/simu
 # instances see no IMU/accel/gyro and never arm.
 export GZ_SIM_SERVER_CONFIG_PATH="$PX4/src/modules/simulation/gz_bridge/server.config"
 
+PARCEL_PID=""
 cleanup() {
+  if [ -n "${PARCEL_PID:-}" ]; then
+    kill "$PARCEL_PID" 2>/dev/null || true
+  fi
   pkill -x px4 2>/dev/null
-  for p in "gz sim" "fleet_demo.py" "fleet_service.py" "mavsdk_server" "apriltag_detector.py"; do
+  for p in "gz sim" "fleet_demo.py" "fleet_service.py" "mavsdk_server" "apriltag_detector.py" "parcel_fleet.py"; do
     pkill -f "$p" 2>/dev/null
   done
-  rm -f /tmp/airpost_land_target_* 2>/dev/null
+  rm -f /tmp/airpost_land_target_* /tmp/airpost_winch_go_* /tmp/airpost_winch_done_* 2>/dev/null
 }
 trap cleanup EXIT INT TERM
 cleanup; sleep 2
@@ -85,9 +89,9 @@ done <<< "$poses"
 # fleet_demo.py that just proves all N drones take off, hover and land together.
 echo "   waiting for $N drones to boot..."; sleep 20
 if [ "${SERVICE:-0}" = "1" ]; then
+  GZP=$(ls -d /opt/homebrew/Cellar/gz-transport13/*/lib/python3.14/site-packages 2>/dev/null | head -1)
+  GZM=$(ls -d /opt/homebrew/Cellar/gz-msgs10/*/lib/python3.14/site-packages 2>/dev/null | head -1)
   if [ "${PRECISION_LANDING:-1}" != "0" ] && [ "$FLEET_MODEL" = "gz_airpost_delivery_drone" ]; then
-    GZP=$(ls -d /opt/homebrew/Cellar/gz-transport13/*/lib/python3.14/site-packages 2>/dev/null | head -1)
-    GZM=$(ls -d /opt/homebrew/Cellar/gz-msgs10/*/lib/python3.14/site-packages 2>/dev/null | head -1)
     if [ -x "$SIMDIR/.venv-detector/bin/python" ] && [ -n "$GZP" ] && [ -n "$GZM" ]; then
       echo ">> starting $N per-drone precision landing detectors"
       det_rows=$(python3 -c "
@@ -111,6 +115,19 @@ for i in range($N):
     else
       echo ">> precision landing detectors not started (missing detector venv or gz python bindings)"
     fi
+  fi
+  if [ -x "$SIMDIR/.venv-detector/bin/python" ]; then
+    echo ">> starting parcel winch fleet manager"
+    GZ_PYTHONPATH="${PYTHONPATH:-}"
+    if [ -n "$GZP" ] && [ -n "$GZM" ]; then
+      GZ_PYTHONPATH="$GZP:$GZM${PYTHONPATH:+:$PYTHONPATH}"
+    fi
+    GZ_IP=127.0.0.1 PYTHONPATH="$GZ_PYTHONPATH" \
+      "$SIMDIR/.venv-detector/bin/python" "$SIMDIR/parcel_fleet.py" \
+      --n-drones "$N" --world airpost >/tmp/airpost_parcel_fleet.log 2>&1 &
+    PARCEL_PID=$!
+  else
+    echo ">> parcel winch fleet manager not started (missing detector venv)"
   fi
   echo ">> MQTT delivery service (broker ${MQTT_BROKER:-127.0.0.1}); register orders in the UI/API"
   MQTT_BROKER="${MQTT_BROKER:-127.0.0.1}" python3 "$SIMDIR/fleet_service.py" "$N"
