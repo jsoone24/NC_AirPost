@@ -30,7 +30,6 @@ rng = random.Random(SEED)
 HALF = 150.0 if SCENE == "baylands" else 200.0
 FLOOR = 340.0 if SCENE == "baylands" else 1500.0
 PAD_Z = 0.02
-PAD_BOX_H = 0.4
 STN_SEP = 30.0   # min distance between stations (only one tag ever in camera view)
 SITE_SEP = 22.0  # min distance between delivery circles
 MIX_SEP = 12.0   # min distance station <-> site
@@ -89,7 +88,7 @@ if SCENE == "baylands":
     body.append(inc("baylands_scenery", "park", 205, 155, -1))
 # On real terrain use RAISED BOX pads (grey sides + coloured top) that stand on the ground, with
 # the tag/drone on the box top; on the flat field keep the thin flat pads. PAD_H/DROP_H = box top.
-PAD_MODEL, PAD_H = ("airpost_pad", PAD_BOX_H) if use_clearings else ("helipad", 0.0)
+PAD_MODEL, PAD_H = ("airpost_pad", 0.25) if use_clearings else ("helipad", 0.0)
 DROP_MODEL, DROP_H = ("airpost_drop_pad", 0.2) if use_clearings else ("airpost_delivery_zone", 0.0)
 for s in stations:
     # the pad and its tag share the SAME (random) heading, so the whole station is rotated together.

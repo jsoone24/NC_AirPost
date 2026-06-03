@@ -16,6 +16,12 @@ BUILD="$PX4/build/px4_sitl_default"
 export PATH="$PX4/.venv/bin:/opt/homebrew/bin:$PATH"
 export PX4_GZ_WORLD=airpost GST_REGISTRY_FORK=no
 unset GZ_PARTITION
+# CRITICAL: pin the gz-transport IP so the gz SERVER, px4 instances and the per-drone AprilTag
+# detectors all share one discovery address. Without it the server advertises on a different
+# interface IP than the detectors bind to, so the camera topics are discovered but deliver ZERO
+# frames -> precision landing never sees the tag. The single-drone path (_simctl.sh) sets this; the
+# fleet must too. (gz-transport uses GZ_IP for unicast discovery.)
+export GZ_IP=127.0.0.1
 # Include PX4's stock gz models/worlds: a manually-launched gz server (unlike PX4's own
 # launch) must resolve x500/x500_base itself, and that base model carries the IMU/baro/mag
 # sensors. Without it the server can't find x500/model.sdf and every instance boots with no
@@ -48,7 +54,9 @@ for i in range($N):
     s=st[i + 1]; print(f\"{s['E']},{s['N']},{round(s['Z']+0.55,2)},0,0,0\")
 ")
 
-# 3) Start the gz server (standalone) holding the world.
+# 3) Start the gz server holding the world. On macOS `gz sim` cannot run server+GUI combined
+# (gz-sim#44), so it is always a headless `-s` server (+ a separate `-g` client for the GUI). The
+# `-s` server still runs the Sensors system and renders the downward cameras for precision landing.
 echo ">> starting gz server (world=airpost), spawning $N drones"
 gst-inspect-1.0 >/dev/null 2>&1 || true
 if [ "${GUI:-1}" = "0" ]; then export HEADLESS=1; fi
