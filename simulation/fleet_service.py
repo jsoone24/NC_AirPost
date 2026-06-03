@@ -351,7 +351,7 @@ class Drone:
         # disarming; this completes that genuine touchdown.
         start_up = (await self.pos())[2]
         min_up = start_up
-        pn, pe, settle, last_up = ln, le, 0, None
+        pn, pe, on_target = ln, le, 0
         for i in range(220):  # up to ~110 s
             if i % 16 == 0:    # (re)issue mode command in case an ack was dropped under fleet load
                 try:
@@ -365,11 +365,15 @@ class Drone:
             if not await self.armed():
                 return True, math.hypot(pn - ln, pe - le)   # PX4's own touchdown disarm (primary)
             min_up = min(min_up, up)
-            descended = (start_up - up) > 10.0   # genuinely came down from cruise (a real landing)
-            settled = up <= min_up + 0.6         # at its lowest point (on/near the ground)
-            if descended and settled and last_up is not None and abs(up - last_up) < 0.25:
-                settle += 1
-                if settle >= 12:                 # ~6 s motionless on the pad
+            # Robust completion judged HORIZONTALLY (vertical telemetry gets jumpy under peak
+            # multi-camera render load, breaking a vertical-stability check). Once precland has
+            # vision-centred the drone on the landing tag (xy within 1.5 m) AND it has descended from
+            # cruise to near its lowest point (on/just over the pad, not cruising), and has held that
+            # for ~10 s, the touchdown is genuine — PX4's land detector merely lagged — so complete it.
+            descended = (start_up - up) > 10.0 and up <= min_up + 1.0
+            if descended and math.hypot(pn - ln, pe - le) < 1.5:
+                on_target += 1
+                if on_target >= 20:              # ~10 s settled on the tag over the pad
                     try:
                         await self.d.action.disarm()
                     except Exception:
@@ -380,8 +384,7 @@ class Drone:
                     await asyncio.sleep(1.0)
                     return (not await self.armed()), math.hypot(pn - ln, pe - le)
             else:
-                settle = 0
-            last_up = up
+                on_target = 0
             await asyncio.sleep(0.5)
         return False, math.hypot(pn - ln, pe - le)
 
