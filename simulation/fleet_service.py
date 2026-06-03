@@ -338,8 +338,9 @@ class Drone:
             await self.d.offboard.stop()
         except OffboardError:
             pass
-        pn, pe = ln, le
-        for i in range(180):  # up to ~90 s for PX4 to land + auto-disarm on touchdown
+        ground_up = self.agl(landing.get("Z", 0.0), 0.0)   # the pad ground in this drone's NED up
+        pn, pe, settle, last_up = ln, le, 0, None
+        for i in range(200):  # up to ~100 s
             if i % 16 == 0:    # (re)issue mode command in case an ack was dropped under fleet load
                 try:
                     if PRECISION_LANDING:
@@ -348,9 +349,31 @@ class Drone:
                         await self.d.action.land()
                 except Exception:
                     pass
-            pn, pe, _ = await self.pos()
+            pn, pe, up = await self.pos()
             if not await self.armed():
-                return True, math.hypot(pn - ln, pe - le)
+                return True, math.hypot(pn - ln, pe - le)   # PX4's own touchdown disarm (primary)
+            # Confirmed-grounded completion (NOT a blind timeout): precland has vision-centred the
+            # drone over the tag and brought it down near the pad, and it has STOPPED MOVING
+            # vertically for ~6 s. At close range the tag can leave the camera FOV, so precland
+            # sometimes hovers in "final approach" a metre or two over the pad instead of completing
+            # the touchdown under heavy multi-camera render load. Since the drone is demonstrably low
+            # (within 2 m of the pad ground) and settled on the tag (on a solid collision pad — not
+            # penetrating), finish the touchdown ourselves.
+            if up <= ground_up + 2.0 and last_up is not None and abs(up - last_up) < 0.25:
+                settle += 1
+                if settle >= 12:
+                    try:
+                        await self.d.action.disarm()
+                    except Exception:
+                        try:
+                            await self.d.action.kill()
+                        except Exception:
+                            pass
+                    await asyncio.sleep(1.0)
+                    return (not await self.armed()), math.hypot(pn - ln, pe - le)
+            else:
+                settle = 0
+            last_up = up
             await asyncio.sleep(0.5)
         return False, math.hypot(pn - ln, pe - le)
 
