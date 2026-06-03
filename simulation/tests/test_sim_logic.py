@@ -83,6 +83,14 @@ def test_baylands_places_pads_on_measured_terrain():
         assert round(z, 2) in valid
 
 
+def test_airpost_pad_is_full_landing_surface():
+    """Baylands has no terrain collision, so the station pad must be a real full-size landing deck."""
+    root = ET.parse(os.path.join(SIMDIR, "gz/models/airpost_pad/model.sdf")).getroot()
+    size = root.find(".//collision/geometry/box/size")
+    assert size is not None
+    assert tuple(float(x) for x in size.text.split()) == (5.0, 5.0, 0.4)
+
+
 def test_winch_state_machine_rearms_between_sorties():
     """The winch manager must not get stuck after one delivery: a second sortie has to lower the
     parcel too. This is the regression guard for the back-to-back-sortie fix."""

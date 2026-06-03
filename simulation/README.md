@@ -75,7 +75,7 @@ simulation/
     airpost_pad/              raised station helipad box (grey sides, green top) — sits on real ground
     airpost_drop_pad/         raised delivery drop box (grey sides, red top) — parcel lands on top
     terrain_probe/            teleportable downward gpu_lidar used by probe_terrain to map clearings
-    airpost_delivery_drone/   x500 + down camera + down lidar + winch + DetachableJoint parcel
+    airpost_delivery_drone/   x500 + down camera + down lidar + visual winch
     airpost_tag_<id>/         unique ArUco tag per station (id = station index)
     airpost_package/          the parcel
   tests/
@@ -251,18 +251,20 @@ GUI=0 SERVICE=1 ./run_airpost_fleet.sh 8       # boot 8 drones, then the MQTT de
 ```
 
 It starts one gz server holding the world, launches N px4 instances with `PX4_GZ_STANDALONE=1`
-(each spawns `x500_<i>` at the seeded station helipads — station ids 1..N — and exposes MAVSDK on
-`udp 14540+i`), then runs the flight program:
+(each spawns `airpost_delivery_drone_<i>` at the seeded station helipads — station ids 1..N — and
+exposes MAVSDK on `udp 14540+i`), then runs the flight program:
 
 - default → `fleet_demo.py`: all N drones take off, hover at staggered altitudes and land together.
 - `SERVICE=1` → `fleet_service.py`: the MQTT delivery service. It holds one MAVSDK link per drone,
   consumes `airpost/delivery/request`, routes each order to its `drone_id` (instance `drone_id-51`),
-  and flies takeoff → ferry-to-pickup (if needed) → drop → land-at-nearest-station concurrently,
-  each at the backend-assigned cruise band. It also streams live drone telemetry and (simulated)
-  station sensors to Kafka `sensor-data` (`KAFKA_BROKER`, default `127.0.0.1:9092`) → logic-core → ES.
+  and flies takeoff → ferry-to-pickup (if needed) → drop → precision-land-at-nearest-station
+  concurrently, each at the backend-assigned cruise band. It also streams live drone telemetry and
+  (simulated) station sensors to Kafka `sensor-data` (`KAFKA_BROKER`, default `127.0.0.1:9092`) →
+  logic-core → ES.
 
 **The gz↔PX4 sensor bridge.** A *manually* started gz server must resolve PX4's stock models
 itself, so `run_airpost_fleet.sh` adds `$PX4/Tools/simulation/gz/models` to `GZ_SIM_RESOURCE_PATH`
 (the `x500_base` model carries the IMU/baro/mag). Without it every instance boots with
-`gyro/accel/baro missing` and can never arm. The demo uses the stock `x500` (its winch-equipped
-custom cousin duplicates an internal frame name across instances in one world).
+`gyro/accel/baro missing` and can never arm. The default fleet model is
+`gz_airpost_delivery_drone`, which adds the per-instance downward camera and rangefinder used by
+precision landing.

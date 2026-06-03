@@ -26,7 +26,13 @@ export GZ_SIM_RESOURCE_PATH="$SIMDIR/gz/models:$SIMDIR/gz/worlds:$PX4/Tools/simu
 # instances see no IMU/accel/gyro and never arm.
 export GZ_SIM_SERVER_CONFIG_PATH="$PX4/src/modules/simulation/gz_bridge/server.config"
 
-cleanup() { pkill -x px4 2>/dev/null; pkill -f 'gz sim' 2>/dev/null; pkill -f 'fleet_demo.py\|fleet_service.py' 2>/dev/null; pkill -f mavsdk_server 2>/dev/null; }
+cleanup() {
+  pkill -x px4 2>/dev/null
+  for p in "gz sim" "fleet_demo.py" "fleet_service.py" "mavsdk_server" "apriltag_detector.py"; do
+    pkill -f "$p" 2>/dev/null
+  done
+  rm -f /tmp/airpost_land_target_* 2>/dev/null
+}
 trap cleanup EXIT INT TERM
 cleanup; sleep 2
 
@@ -39,7 +45,7 @@ poses=$(python3 -c "
 import json
 st={s['id']: s for s in json.load(open('$SIMDIR/tests/airpost_sites.json'))['stations']}
 for i in range($N):
-    s=st[i + 1]; print(f\"{s['E']},{s['N']},{round(s['Z']+0.4,2)},0,0,0\")
+    s=st[i + 1]; print(f\"{s['E']},{s['N']},{round(s['Z']+0.55,2)},0,0,0\")
 ")
 
 # 3) Start the gz server (standalone) holding the world.
@@ -51,14 +57,13 @@ sleep 8
 [ "${GUI:-1}" = "1" ] && { gz sim -g >/tmp/fleet_gzgui.log 2>&1 & }
 
 # 4) Launch N px4 instances; each spawns airpost_delivery_drone_<i> into the running gz.
+FLEET_MODEL="${FLEET_MODEL:-gz_airpost_delivery_drone}"
 i=0
 while IFS= read -r pose; do
   [ -z "$pose" ] && continue
   wd="$BUILD/instance_$i"; mkdir -p "$wd"
-  # Use the stock x500 for the multi-drone flight demo: the custom airpost_delivery_drone has a
-  # winch joint whose internal frames collide across instances in one gz world (see README).
   ( cd "$wd" && PX4_GZ_STANDALONE=1 PX4_GZ_WORLD=airpost PX4_GZ_MODEL_POSE="$pose" \
-      PX4_SIM_MODEL="${FLEET_MODEL:-gz_x500}" "$BUILD/bin/px4" -i "$i" -d "$BUILD/etc" \
+      PX4_SIM_MODEL="$FLEET_MODEL" "$BUILD/bin/px4" -i "$i" -d "$BUILD/etc" \
       >"$wd/out.log" 2>"$wd/err.log" & )
   echo "   px4 instance $i @ $pose  (MAVSDK udp 1454$i)"
   # Stagger generously: each instance inserts its model into the shared gz server, and two
@@ -72,6 +77,33 @@ done <<< "$poses"
 # fleet_demo.py that just proves all N drones take off, hover and land together.
 echo "   waiting for $N drones to boot..."; sleep 20
 if [ "${SERVICE:-0}" = "1" ]; then
+  if [ "${PRECISION_LANDING:-1}" != "0" ] && [ "$FLEET_MODEL" = "gz_airpost_delivery_drone" ]; then
+    GZP=$(ls -d /opt/homebrew/Cellar/gz-transport13/*/lib/python3.14/site-packages 2>/dev/null | head -1)
+    GZM=$(ls -d /opt/homebrew/Cellar/gz-msgs10/*/lib/python3.14/site-packages 2>/dev/null | head -1)
+    if [ -x "$SIMDIR/.venv-detector/bin/python" ] && [ -n "$GZP" ] && [ -n "$GZM" ]; then
+      echo ">> starting $N per-drone precision landing detectors"
+      det_rows=$(python3 -c "
+import json
+st={s['id']: s for s in json.load(open('$SIMDIR/tests/airpost_sites.json'))['stations']}
+for i in range($N):
+    s=st[i + 1]
+    print(i, s['N'], s['E'], s['id'], s.get('marker_z', s.get('Z', 0.0)))
+")
+      while read -r di hn he sid mz; do
+        [ -z "$di" ] && continue
+        target="/tmp/airpost_land_target_$di"
+        echo "$hn $he $sid $mz" > "$target"
+        GZ_IP=127.0.0.1 PYTHONPATH="$GZP:$GZM" \
+          AIRPOST_MODEL="airpost_delivery_drone_$di" \
+          HOME_N="$hn" HOME_E="$he" EXPECT_N="$hn" EXPECT_E="$he" TARGET_ID="$sid" \
+          LAND_TARGET_FILE="$target" MAV_URL="udpout:127.0.0.1:$((18570 + di))" \
+          "$SIMDIR/.venv-detector/bin/python" "$SIMDIR/tests/apriltag_detector.py" \
+          >"/tmp/airpost_det_$di.log" 2>&1 &
+      done <<< "$det_rows"
+    else
+      echo ">> precision landing detectors not started (missing detector venv or gz python bindings)"
+    fi
+  fi
   echo ">> MQTT delivery service (broker ${MQTT_BROKER:-127.0.0.1}); register orders in the UI/API"
   MQTT_BROKER="${MQTT_BROKER:-127.0.0.1}" python3 "$SIMDIR/fleet_service.py" "$N"
 else

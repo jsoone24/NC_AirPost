@@ -38,8 +38,8 @@ ARUCO_DICT = cv2.aruco.DICT_4X4_50
 # PX4 local-NED origin = takeoff (home) world position. gz gives world coords; subtract HOME
 # so LANDING_TARGET is in PX4 local NED. (HOME = takeoff station world N,E; 0,0 if spawn at origin.)
 HOME_N = float(os.environ.get("HOME_N", "0")); HOME_E = float(os.environ.get("HOME_E", "0"))
-# All pads share ArUco id 0, so when several are in view we must disambiguate by proximity to
-# the KNOWN target-station world position; reject markers farther than GATE (rejects neighbours).
+# Each station pad has its own ArUco id. The known target-station world position is still used as
+# a proximity gate so a false or neighbouring detection is ignored.
 EXPECT_N = float(os.environ["EXPECT_N"]) if os.environ.get("EXPECT_N") else None
 EXPECT_E = float(os.environ["EXPECT_E"]) if os.environ.get("EXPECT_E") else None
 GATE = float(os.environ.get("GATE", "8.0"))
@@ -144,8 +144,8 @@ def detector():
             de = fwd * math.sin(yaw) + right * math.cos(yaw)
             return state["n"] + dn, state["e"] + de
 
-        # all pads are id 0; evaluate every detected marker and pick the one nearest the
-        # KNOWN target station (or, if unknown, nearest the drone's nadir). Reject far ones.
+        # Evaluate every detected marker and pick the one nearest the KNOWN target station (or, if
+        # unknown, nearest the drone's nadir). Reject far ones.
         refN = tgt["N"] if tgt["N"] is not None else state["n"]
         refE = tgt["E"] if tgt["E"] is not None else state["e"]
         best = None; best_d = 1e18

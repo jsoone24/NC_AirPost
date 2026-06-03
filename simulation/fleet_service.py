@@ -29,6 +29,7 @@ import sys
 import paho.mqtt.client as mqtt
 from mavsdk import System
 from mavsdk.offboard import OffboardError, PositionNedYaw
+from pymavlink import mavutil
 
 SIMDIR = os.path.dirname(os.path.abspath(__file__))
 SITES = os.path.join(SIMDIR, "tests", "airpost_sites.json")
@@ -41,6 +42,9 @@ STATUS_TOPIC = "airpost/delivery/status"
 DRONE_ID_BASE = 50
 DELIVER_ALT = 6.0  # metres above ground to hover while dropping the parcel
 LAND_ALT = 1.0     # metres to descend to before handing off to PX4's land
+PRECLAND_ALT = 3.0
+PRECISION_LANDING = os.environ.get("PRECISION_LANDING", "1") != "0"
+LAND_TARGET_PREFIX = os.environ.get("LAND_TARGET_PREFIX", "/tmp/airpost_land_target")
 
 # Telemetry sink: drone + station sensor readings are produced to this Kafka topic, where logic-core
 # consumes them, maps values onto each node's sensor schema (seed.go) and indexes into Elasticsearch.
@@ -74,6 +78,12 @@ class Drone:
         self.spawn_n, self.spawn_e = spawn_n, spawn_e
         self.spawn_z = spawn_z  # spawn ground elevation; the local NED altitude origin
         self.d = System(port=50060 + inst)
+        self._mav = mavutil.mavlink_connection(
+            f"udpout:127.0.0.1:{18570 + inst}",
+            source_system=255,
+            source_component=190,
+        )
+        self.land_target_file = f"{LAND_TARGET_PREFIX}_{inst}"
         self.lock = asyncio.Lock()
         self._sp = PositionNedYaw(0.0, 0.0, 0.0, 0.0)
         self._flying = False
@@ -140,11 +150,24 @@ class Drone:
         except asyncio.TimeoutError:
             print(f"drone {self.inst}: not ready (timed out connecting), serving degraded", flush=True)
             return
-        for k, v in [("MPC_XY_VEL_MAX", 8.0), ("MPC_XY_CRUISE", 8.0),
-                     ("MPC_Z_VEL_MAX_UP", 3.0), ("MPC_Z_VEL_MAX_DN", 3.0),
-                     ("MPC_LAND_SPEED", 1.0), ("COM_DISARM_LAND", 0.4)]:
+        float_params = [
+            ("PLD_SRCH_ALT", PRECLAND_ALT), ("PLD_HACC_RAD", 0.15), ("PLD_FAPPR_ALT", 0.1),
+            ("PLD_SRCH_TOUT", 20.0), ("MPC_XY_VEL_MAX", 8.0), ("MPC_XY_CRUISE", 8.0),
+            ("MPC_Z_VEL_MAX_UP", 3.0), ("MPC_Z_VEL_MAX_DN", 3.0),
+            ("MPC_LAND_SPEED", 1.0), ("MPC_LAND_ALT1", 3.0), ("MPC_LAND_ALT2", 1.0),
+            ("COM_DISARM_LAND", 0.4), ("EKF2_MIN_RNG", 0.03), ("EKF2_RNG_A_HMAX", 8.0),
+            ("EKF2_RNG_A_VMAX", 2.0), ("EKF2_RNG_POS_X", 0.22), ("EKF2_RNG_POS_Y", 0.0),
+            ("EKF2_RNG_POS_Z", 0.05),
+        ]
+        int_params = [("PLD_MAX_SRCH", 3), ("EKF2_RNG_CTRL", 1)]
+        for k, v in float_params:
             try:
                 await self.d.param.set_param_float(k, v)
+            except Exception:
+                pass
+        for k, v in int_params:
+            try:
+                await self.d.param.set_param_int(k, v)
             except Exception:
                 pass
         print(f"drone {self.inst}: ready (NED origin @ N{self.spawn_n:.0f} E{self.spawn_e:.0f})", flush=True)
@@ -217,18 +240,35 @@ class Drone:
             await asyncio.sleep(0.5)
         return True
 
-    async def _land_here(self, ln, le, land_alt):
-        """Descend over the landing station and complete the landing; return (landed, error_m).
-        land_alt is terrain-corrected (see agl).
+    def _write_land_target(self, station):
+        marker_z = station.get("marker_z", station.get("Z", 0.0))
+        tmp = f"{self.land_target_file}.tmp"
+        with open(tmp, "w") as f:
+            f.write(f"{station['N']} {station['E']} {station['id']} {marker_z}")
+        os.replace(tmp, self.land_target_file)
 
-        Approach: pre-descend over the pad under offboard (fast), then hand to PX4's AUTO.LAND and
-        wait for its touchdown disarm. PX4's land DETECTOR occasionally never fires at some Gazebo
-        pads — the vehicle is physically on the ground (telemetry altitude ~0) but PX4 keeps
-        thrusting in "Landing at current position", so the low-thrust land condition is never met.
-        After giving AUTO.LAND a fair chance, complete the parked landing ourselves with a disarm,
-        so the sortie never hangs under fleet load. The parcel is already delivered and the drone is
-        over its landing station at low altitude, so this just finishes the touchdown."""
-        await self._go_to(ln, le, land_alt, z_tol=0.8)   # fast offboard descent to ~1 m over the pad
+    def _request_precland(self):
+        # MAVSDK has no direct PRECLAND action. This matches the working single-drone path and sends
+        # PX4 custom mode AUTO.PRECLAND to this instance's GCS MAVLink port (18570 + instance).
+        self._mav.mav.command_long_send(
+            self.inst + 1, 1, mavutil.mavlink.MAV_CMD_DO_SET_MODE, 0,
+            1, 4, 9, 0, 0, 0, 0,
+        )
+
+    async def _land_here(self, ln, le, landing):
+        """Align over the landing station and wait for PX4's genuine touchdown disarm.
+
+        Default path is precision landing: the per-drone detector streams LANDING_TARGET to this PX4
+        instance, and AUTO.PRECLAND centres on the station tag before touchdown. PRECISION_LANDING=0
+        keeps the old AUTO.LAND path for diagnostics, still without any forced disarm."""
+        land_alt = self.agl(landing.get("Z", 0.0), LAND_ALT)
+        if PRECISION_LANDING:
+            self._write_land_target(landing)
+            yaw = 90.0 - float(landing.get("yaw_deg", 0.0))
+            await self._go_to(ln, le, self.agl(landing.get("Z", 0.0), PRECLAND_ALT),
+                              yaw=yaw, xy_tol=1.0, z_tol=0.8)
+        else:
+            await self._go_to(ln, le, land_alt, z_tol=0.8)
         self._flying = False
         await asyncio.sleep(0.3)
         try:
@@ -236,27 +276,20 @@ class Drone:
         except OffboardError:
             pass
         pn, pe = ln, le
-        for i in range(70):  # ~35 s for PX4 to land + auto-disarm on its own
-            if i % 12 == 0:  # (re)issue LAND in case an ack was dropped under load
+        for i in range(180):  # up to ~90 s for PX4 to land + auto-disarm on touchdown
+            if i % 16 == 0:    # (re)issue mode command in case an ack was dropped under fleet load
                 try:
-                    await self.d.action.land()
+                    if PRECISION_LANDING:
+                        self._request_precland()
+                    else:
+                        await self.d.action.land()
                 except Exception:
                     pass
             pn, pe, _ = await self.pos()
             if not await self.armed():
                 return True, math.hypot(pn - ln, pe - le)
             await asyncio.sleep(0.5)
-        # Detector didn't fire — force-disarm to complete the touchdown.
-        for _ in range(6):
-            try:
-                await self.d.action.kill()
-            except Exception:
-                pass
-            await asyncio.sleep(0.8)
-            if not await self.armed():
-                break
-        pn, pe, _ = await self.pos()
-        return (not await self.armed()), math.hypot(pn - ln, pe - le)
+        return False, math.hypot(pn - ln, pe - le)
 
     async def fly(self, req, st, pub):
         """Fly one order: takeoff -> (ferry to pickup) -> drop -> land at nearest station."""
@@ -289,7 +322,9 @@ class Drone:
         pub("enroute_landing")
         ln, le = self.ned(landing["N"], landing["E"])
         await self._go_to(ln, le, cruise, z_tol=2.0)   # climb back + transit to the landing station
-        landed, lerr = await self._land_here(ln, le, self.agl(landing.get("Z", 0.0), LAND_ALT))
+        if PRECISION_LANDING:
+            pub("precision_landing")
+        landed, lerr = await self._land_here(ln, le, landing)
 
         ok = derr < 3.0 and landed
         pub("done" if ok else "failed", result="PASS" if ok else "FAIL",
