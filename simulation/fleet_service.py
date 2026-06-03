@@ -43,6 +43,8 @@ DRONE_ID_BASE = 50
 WINCH_HEIGHT = 10.0  # metres above the snapped drop-pad ground while lowering the parcel
 WINCH_TIMEOUT = 60.0
 WINCH_POLL = 0.5
+DROP_PAD_H = 0.2     # height of the red drop box (airpost_drop_pad top above its ground)
+PARCEL_HALF = 0.045  # half of the 0.09 m parcel: rest the parcel ON the box top, not sunk through it
 LAND_ALT = 1.0     # metres to descend to before handing off to PX4's land
 PRECLAND_ALT = 3.0
 PRECISION_LANDING = os.environ.get("PRECISION_LANDING", "1") != "0"
@@ -97,6 +99,23 @@ def point_lock(kind, key):
     if k not in _point_locks:
         _point_locks[k] = asyncio.Lock()
     return _point_locks[k]
+
+
+# Global precision-landing concurrency limit. Camera precision landing is GPU/CPU heavy (full-res
+# render + per-drone ArUco). Running several at once on one host starves each detector so the marker
+# drops out for seconds -> PrecLand search/fallback -> off-pad touchdown. Serialising the precland
+# phase (only PRECLAND_SLOTS drone(s) descending on a tag at a time; the rest hold at their cruise
+# band over the station) gives each landing single-drone resources, so it lands on the tag reliably.
+# Like one runway at a time. PRECLAND_SLOTS env tunes how many may precland concurrently.
+PRECLAND_SLOTS = int(os.environ.get("PRECLAND_SLOTS", "1"))
+_precland_sem = None
+
+
+def precland_sem():
+    global _precland_sem
+    if _precland_sem is None:
+        _precland_sem = asyncio.Semaphore(max(1, PRECLAND_SLOTS))
+    return _precland_sem
 
 
 def winch_go(inst):
@@ -216,16 +235,31 @@ class Drone:
         except asyncio.TimeoutError:
             print(f"drone {self.inst}: not ready (connect timed out), serving degraded", flush=True)
             return
+        # NOTE: this MAVSDK pass is the AUTHORITATIVE precland config — it runs after boot and after
+        # the run-script's px4-param pass, so whatever is set here wins. MAVSDK set_param_float/int is
+        # type-correct (unlike a raw MAVLink PARAM_SET, which corrupts INT32 params).
+        # PLD_SRCH_TOUT=0 + PLD_MAX_SRCH=0 DISABLE the precland search: on a brief marker loss PX4
+        # lands in place (the drone is already centred over the tag) instead of climbing to 10 m and
+        # drifting off the pad (which, on collision-free scenery, dropped the drone through the world).
         float_params = [
             ("PLD_SRCH_ALT", PRECLAND_ALT), ("PLD_HACC_RAD", 0.15), ("PLD_FAPPR_ALT", 0.1),
-            ("PLD_SRCH_TOUT", 20.0), ("MPC_XY_VEL_MAX", 8.0), ("MPC_XY_CRUISE", 8.0),
+            ("PLD_SRCH_TOUT", 0.0), ("LTEST_MEAS_UNC", 0.05),
+            ("MPC_XY_VEL_MAX", 8.0), ("MPC_XY_CRUISE", 8.0),
             ("MPC_Z_VEL_MAX_UP", 3.0), ("MPC_Z_VEL_MAX_DN", 3.0),
             ("MPC_LAND_SPEED", 1.0), ("MPC_LAND_ALT1", 3.0), ("MPC_LAND_ALT2", 1.0),
             ("COM_DISARM_LAND", 0.4), ("EKF2_MIN_RNG", 0.03), ("EKF2_RNG_A_HMAX", 8.0),
             ("EKF2_RNG_A_VMAX", 2.0), ("EKF2_RNG_POS_X", 0.22), ("EKF2_RNG_POS_Y", 0.0),
             ("EKF2_RNG_POS_Z", 0.05),
         ]
-        int_params = [("PLD_MAX_SRCH", 3), ("EKF2_RNG_CTRL", 1)]
+        # LTEST_MODE=1 stationary target. LTEST_SENS_ROT=2 (YAW_90): the detector sends the marker
+        # image ray as pos_x=image-x(right), pos_y=image-y(down); the estimator needs body
+        # forward=-image_y, right=+image_x (the mapping the original detector used and that tracked
+        # the tag). get_rot_matrix(YAW_90)=[[0,-1],[1,0]] turns [px,py] into [-py,px] = exactly that.
+        # (sens_rot=0 left the bearing un-rotated, so the correction pointed the wrong way and the
+        # drone drove AWAY from the tag, lost it and fell.) PLD_MAX_SRCH=0 + PLD_SRCH_TOUT=0 -> no
+        # search drift.
+        int_params = [("PLD_MAX_SRCH", 0), ("EKF2_RNG_CTRL", 1),
+                      ("LTEST_MODE", 1), ("LTEST_SENS_ROT", 2)]
         for k, v in float_params:
             try:
                 await self.d.param.set_param_float(k, v)
@@ -397,10 +431,15 @@ class Drone:
         if site is not None:
             drop_n, drop_e = site["N"], site["E"]
             pad_ground_z = site.get("Z", pickup.get("Z", 0.0))
+            # Parcel rests ON the red box top (box top = ground + DROP_PAD_H), plus half the parcel.
+            rest_z = pad_ground_z + DROP_PAD_H + PARCEL_HALF
+            drop_center = (site["E"], site["N"])     # gz world XY of the box centre (x=E, y=N)
             lock_key = ("site", site.get("id"))
         else:
             drop_n, drop_e = requested_n, requested_e
             pad_ground_z = pickup.get("Z", 0.0)
+            rest_z = pad_ground_z
+            drop_center = None
             lock_key = ("drop", round(drop_n, 1), round(drop_e, 1))
         print(f"drone {self.inst}: delivery -> drop {lock_key} N{drop_n:.1f} E{drop_e:.1f} z={pad_ground_z:.2f}", flush=True)
 
@@ -422,7 +461,12 @@ class Drone:
             except OSError:
                 pass
             with open(ground_file, "w") as f:
-                f.write(str(pad_ground_z))
+                # "rest_z E N" so parcel_fleet slides the parcel onto the box CENTRE as it lowers
+                # (rest ON the box even if the drone hovers off-centre); "rest_z" alone for raw drops.
+                if drop_center is not None:
+                    f.write(f"{rest_z} {drop_center[0]} {drop_center[1]}")
+                else:
+                    f.write(str(rest_z))
             with open(go_file, "w") as f:
                 f.write("go")
             pub("lowering_cable")
@@ -484,9 +528,30 @@ class Drone:
         await self._acquire_point(land_lock, ln, le, cruise, pub, "landing")
         try:
             await self._go_to(ln, le, cruise, z_tol=2.0)         # re-center over the station
-            if PRECISION_LANDING:
-                pub("precision_landing")
-            landed, lerr = await self._land_here(ln, le, landing)
+            # Serialise the heavy camera precision-landing: hold at the cruise band over the station
+            # until a precland slot is free (offboard keeps streaming this setpoint, so the drone
+            # hovers in place while it waits), then descend with single-drone resources.
+            sem = precland_sem()
+            if sem.locked():
+                pub("holding")
+            async with sem:
+                await self._go_to(ln, le, cruise, z_tol=2.0)     # re-center after any hold
+                if PRECISION_LANDING:
+                    pub("precision_landing")
+                # Activate THIS drone's detector only now (and, with landings serialised, only this
+                # one) so its ArUco detection isn't CPU-starved by the rest of the fleet's detectors.
+                flag = f"/tmp/airpost_landing_active_{self.inst}"
+                try:
+                    open(flag, "w").write("1")
+                except OSError:
+                    pass
+                try:
+                    landed, lerr = await self._land_here(ln, le, landing)
+                finally:
+                    try:
+                        os.remove(flag)
+                    except OSError:
+                        pass
         finally:
             land_lock.release()                                  # free the station for the next drone
 

@@ -41,10 +41,34 @@ cleanup() {
   for p in "gz sim" "fleet_demo.py" "fleet_service.py" "mavsdk_server" "apriltag_detector.py" "parcel_fleet.py" "station_iot.py"; do
     pkill -f "$p" 2>/dev/null
   done
-  rm -f /tmp/airpost_land_target_* /tmp/airpost_winch_go_* /tmp/airpost_winch_done_* 2>/dev/null
+  rm -f /tmp/airpost_land_target_* /tmp/airpost_winch_go_* /tmp/airpost_winch_done_* /tmp/airpost_landing_active_* 2>/dev/null
 }
 trap cleanup EXIT INT TERM
 cleanup; sleep 2
+
+configure_precland_instance() {
+  inst="$1"
+  # Set precision-landing params through the px4-param CLIENT (NOT MAVLink PARAM_SET): the client is
+  # type-correct, while a MAVLink param_set with a float value silently corrupts INT32 params (PX4
+  # reinterprets the float's bit pattern, e.g. LTEST_SENS_ROT=2 became 1073741824) — that bug left
+  # the landing-target sensor rotation garbage, so the bearing pointed the wrong way and the drone
+  # drove AWAY from the tag, lost it, searched and fell off-pad. Param meanings:
+  #  LTEST_MODE=1       stationary target (pads don't move)
+  #  LTEST_SENS_ROT=2   YAW_90: maps the detector's image ray (x=right,y=down) to body fwd=-y,right=+x
+  #  LTEST_MEAS_UNC=0.05 loosen the KF outlier gate so normal vision jitter is fused, not rejected
+  #  PLD_MAX_SRCH=0 + PLD_SRCH_TOUT=0  disable the climb-and-search drift; on a brief loss land in
+  #                     place (drone is already centred over the tag) instead of wandering off-pad
+  for kv in "LTEST_MODE 1" "LTEST_SENS_ROT 2" "LTEST_MEAS_UNC 0.05" "PLD_MAX_SRCH 0" "PLD_SRCH_TOUT 0.0"; do
+    # shellcheck disable=SC2086
+    "$BUILD/bin/px4-param" --instance "$inst" set $kv >/dev/null 2>&1 || \
+      echo "WARN: param set '$kv' failed for instance $inst"
+  done
+  # PX4 SITL exposes modules as px4-MODULE client commands; rcS does not autostart
+  # landing_target_estimator, so start one estimator task in the matching px4 instance.
+  "$BUILD/bin/px4-landing_target_estimator" --instance "$inst" start \
+    >>"$BUILD/instance_$inst/out.log" 2>>"$BUILD/instance_$inst/err.log" || \
+    echo "WARN: failed to start landing_target_estimator for instance $inst"
+}
 
 # 1) Regenerate the world WITHOUT a drone (each px4 instance spawns its own).
 python3 "$SIMDIR/gen_world.py" 40 20 airpost 0 baylands >/dev/null
@@ -103,12 +127,13 @@ for i in range($N):
 ")
       while read -r di hn he sid mz; do
         [ -z "$di" ] && continue
+        configure_precland_instance "$di"
         target="/tmp/airpost_land_target_$di"
         echo "$hn $he $sid $mz" > "$target"
         GZ_IP=127.0.0.1 PYTHONPATH="$GZP:$GZM" \
           AIRPOST_MODEL="airpost_delivery_drone_$di" \
-          HOME_N="$hn" HOME_E="$he" EXPECT_N="$hn" EXPECT_E="$he" TARGET_ID="$sid" \
-          LAND_TARGET_FILE="$target" MAV_URL="udpout:127.0.0.1:$((18570 + di))" \
+          TARGET_ID="$sid" LAND_TARGET_FILE="$target" MAV_URL="udpout:127.0.0.1:$((18570 + di))" \
+          LANDING_FLAG="/tmp/airpost_landing_active_$di" \
           "$SIMDIR/.venv-detector/bin/python" "$SIMDIR/tests/apriltag_detector.py" \
           >"/tmp/airpost_det_$di.log" 2>&1 &
       done <<< "$det_rows"

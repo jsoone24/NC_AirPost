@@ -76,8 +76,14 @@ class ParcelState:
     ground: float = 0.05
     lower_z0: float = 0.0
     lower_t0: float = 0.0
+    lower_x0: float = 0.0
+    lower_y0: float = 0.0
     release_x: float = 0.0
     release_y: float = 0.0
+    # World XY of the drop-pad CENTRE (gz frame: x=E, y=N). The parcel slides onto this exact point
+    # as it descends so it rests ON the red drop box even when the drone hovers off-centre (EKF bias).
+    target_x: float | None = None
+    target_y: float | None = None
 
     def __post_init__(self):
         self.package_name = f"airpost_package_{self.inst}"
@@ -226,11 +232,19 @@ def main():
                     set_cable(st, dx, dy, max(dz, pz + 0.02), pz)
                 if os.path.exists(winch_go(st.inst)):
                     try:
-                        st.ground = float(open(winch_ground(st.inst)).read().strip())
+                        # ground file: "z" (rest height) or "z E N" (rest height + drop-pad centre).
+                        parts = open(winch_ground(st.inst)).read().split()
+                        st.ground = float(parts[0])
+                        if len(parts) >= 3:
+                            st.target_x, st.target_y = float(parts[1]), float(parts[2])
+                        else:
+                            st.target_x = st.target_y = None
                     except Exception:
                         pass
                     st.lower_t0 = time.time()
-                    st.lower_z0 = max(st.body_to_world(FWD, 0.0, HOOK_DZ)[2], st.ground)
+                    hx, hy, hz = st.body_to_world(FWD, 0.0, HOOK_DZ)
+                    st.lower_x0, st.lower_y0 = hx, hy
+                    st.lower_z0 = max(hz, st.ground)
                     st.state = STATE_LOWERING
                     print(
                         f"parcel_fleet: drone {st.inst} lowering {st.package_name} "
@@ -239,13 +253,22 @@ def main():
                     )
 
             elif st.state == STATE_LOWERING:
-                px, py, _ = st.body_to_world(FWD, 0.0, 0.0)
                 pz = max(st.ground, st.lower_z0 - RATE * (time.time() - st.lower_t0))
+                if st.target_x is not None:
+                    # Slide the parcel from the winch point onto the drop-pad centre as it descends,
+                    # so it lands ON the red box regardless of where the drone hovers (EKF bias).
+                    span = max(0.01, st.lower_z0 - st.ground)
+                    frac = min(1.0, max(0.0, (st.lower_z0 - pz) / span))
+                    px = st.lower_x0 + (st.target_x - st.lower_x0) * frac
+                    py = st.lower_y0 + (st.target_y - st.lower_y0) * frac
+                else:
+                    px, py, _ = st.body_to_world(FWD, 0.0, 0.0)
                 set_parcel(st, px, py, pz)
                 if draw:
                     set_cable(st, dx, dy, dz, pz)
                 if pz <= st.ground:
-                    st.release_x, st.release_y = px, py
+                    st.release_x = st.target_x if st.target_x is not None else px
+                    st.release_y = st.target_y if st.target_y is not None else py
                     set_parcel(st, st.release_x, st.release_y, st.ground)
                     del_cable(st)
                     open(winch_done(st.inst), "w").write("done")

@@ -18,7 +18,10 @@
       <uri>x500</uri>
     </include>
 
-    <!-- downward camera -->
+    <!-- downward camera (mono_cam, 1280x960: full res is needed to keep the tag detectable at the
+         3-6 m approach altitude — lower res makes the tag too small, detection drops out and PrecLand
+         falls back off-pad. Multi-drone load gaps are handled by a longer estimator lost-marker
+         timeout instead.) -->
     <include merge="true">
       <uri>model://mono_cam</uri>
       <pose>0 0 .10 0 1.5707 0</pose>
