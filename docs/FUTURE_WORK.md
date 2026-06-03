@@ -80,7 +80,8 @@ The mechanism works; the goal is **every** landing within a few centimetres, in 
 
 ## 7. Product & UX
 
-- Replace the map placeholder with a **real live map** (Leaflet/MapLibre): drone tracks, ETAs, paths.
+- The live map is **already Leaflet + OpenStreetMap** (source/dest/drone markers + path, fed by the
+  health-check WebSocket). Polish it: drone heading/trail, ETAs, and clustering for many drones.
 - **Customer experience:** SMS/push notifications, delivery photo, QR/signature confirmation, a
   recipient tracking page, and a mobile app.
 - **Operator console:** fleet health board, alerting, and manual **takeover/override** of a drone.
