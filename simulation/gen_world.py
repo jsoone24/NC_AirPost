@@ -149,6 +149,10 @@ sdf = f'''<?xml version="1.0" encoding="UTF-8"?>
 </sdf>
 '''
 
+# The world SDF and sites JSON are generated artifacts (gitignored), so their output dirs may not
+# exist on a fresh checkout (e.g. CI) — create them before writing.
+os.makedirs(os.path.join(HERE, "gz/worlds"), exist_ok=True)
+os.makedirs(os.path.join(HERE, "tests"), exist_ok=True)
 with open(os.path.join(HERE, f"gz/worlds/{OUTNAME}.sdf"), "w") as f:
     f.write(sdf)
 with open(os.path.join(HERE, f"tests/{OUTNAME}_sites.json"), "w") as f:
