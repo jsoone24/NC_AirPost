@@ -83,12 +83,18 @@ def test_baylands_places_pads_on_measured_terrain():
         assert round(z, 2) in valid
 
 
-def test_airpost_pad_is_full_landing_surface():
-    """Baylands has no terrain collision, so the station pad must be a real full-size landing deck."""
+def test_airpost_pad_has_collision_and_is_tag_sized():
+    """The station pad must (a) have a collision box — baylands scenery has no terrain collision, so
+    without it a landed drone falls through the world — and (b) stay ~2x the AprilTag side (tag is
+    0.8 m, pad 1.6 m), NOT an oversized deck. Camera precision landing puts the drone on the tag
+    centre to a few cm, so a tag-sized pad is the realistic, intended target (an enlarged pad would
+    just mask landing error)."""
     root = ET.parse(os.path.join(SIMDIR, "gz/models/airpost_pad/model.sdf")).getroot()
     size = root.find(".//collision/geometry/box/size")
-    assert size is not None
-    assert tuple(float(x) for x in size.text.split()) == (5.0, 5.0, 0.4)
+    assert size is not None, "pad must have a collision box so drones don't fall through baylands"
+    w, d, h = (float(x) for x in size.text.split())
+    assert (w, d) == (1.6, 1.6), f"pad should be 1.6 m (~2x the 0.8 m tag), got {(w, d)}"
+    assert 0.2 <= h <= 0.5
 
 
 def test_winch_state_machine_rearms_between_sorties():
