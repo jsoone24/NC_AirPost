@@ -200,18 +200,21 @@ class Drone:
             if h.is_global_position_ok and h.is_home_position_ok and h.is_local_position_ok:
                 return
 
-    async def connect(self):
+    async def _connect_inner(self):
         await self.d.connect(system_address=f"udpin://0.0.0.0:{14540 + self.inst}")
-        # Bound every wait with a hard timeout: if an instance's mavsdk_server failed to start
-        # (gz model-spawn race under heavy fleet load), its telemetry stream never yields, so an
-        # un-bounded `async for` would deadlock the whole fleet's startup. On timeout this drone is
-        # left not-ready (its orders are rejected) and the rest of the fleet still serves.
+        await self._await_connected()
+        await self._await_flyable()
+
+    async def connect(self):
+        # Bound the WHOLE connect (including d.connect, which spawns this drone's mavsdk_server) with
+        # a hard timeout. Under heavy multi-camera render load a mavsdk_server occasionally fails to
+        # come up and the connect would otherwise hang forever, deadlocking the ENTIRE fleet startup.
+        # On timeout this one drone is left not-ready (its orders are rejected) and the rest serve.
         try:
-            await asyncio.wait_for(self._await_connected(), timeout=60)
-            await asyncio.wait_for(self._await_flyable(), timeout=90)
+            await asyncio.wait_for(self._connect_inner(), timeout=120)
             self.ready_ok = True
         except asyncio.TimeoutError:
-            print(f"drone {self.inst}: not ready (timed out connecting), serving degraded", flush=True)
+            print(f"drone {self.inst}: not ready (connect timed out), serving degraded", flush=True)
             return
         float_params = [
             ("PLD_SRCH_ALT", PRECLAND_ALT), ("PLD_HACC_RAD", 0.15), ("PLD_FAPPR_ALT", 0.1),
@@ -338,9 +341,18 @@ class Drone:
             await self.d.offboard.stop()
         except OffboardError:
             pass
-        ground_up = self.agl(landing.get("Z", 0.0), 0.0)   # the pad ground in this drone's NED up
+        # Confirmed-grounded completion — RELATIVE so it is robust to EKF altitude drift over a long
+        # cross-map flight (an absolute terrain-referenced gate misses when the EKF has drifted).
+        # PX4's own touchdown disarm is primary; this finishes the landing when precland has clearly
+        # brought the drone DOWN from cruise (>10 m descent) to its LOWEST point and it has STOPPED
+        # moving for ~6 s — i.e. it is settled on the pad (vision-centred on the tag, on a solid
+        # collision pad: not penetrating, not cruising). At close range the tag leaves the camera FOV
+        # and, under heavy multi-camera render load, precland can hover just over the pad instead of
+        # disarming; this completes that genuine touchdown.
+        start_up = (await self.pos())[2]
+        min_up = start_up
         pn, pe, settle, last_up = ln, le, 0, None
-        for i in range(200):  # up to ~100 s
+        for i in range(220):  # up to ~110 s
             if i % 16 == 0:    # (re)issue mode command in case an ack was dropped under fleet load
                 try:
                     if PRECISION_LANDING:
@@ -352,16 +364,12 @@ class Drone:
             pn, pe, up = await self.pos()
             if not await self.armed():
                 return True, math.hypot(pn - ln, pe - le)   # PX4's own touchdown disarm (primary)
-            # Confirmed-grounded completion (NOT a blind timeout): precland has vision-centred the
-            # drone over the tag and brought it down near the pad, and it has STOPPED MOVING
-            # vertically for ~6 s. At close range the tag can leave the camera FOV, so precland
-            # sometimes hovers in "final approach" a metre or two over the pad instead of completing
-            # the touchdown under heavy multi-camera render load. Since the drone is demonstrably low
-            # (within 2 m of the pad ground) and settled on the tag (on a solid collision pad — not
-            # penetrating), finish the touchdown ourselves.
-            if up <= ground_up + 2.0 and last_up is not None and abs(up - last_up) < 0.25:
+            min_up = min(min_up, up)
+            descended = (start_up - up) > 10.0   # genuinely came down from cruise (a real landing)
+            settled = up <= min_up + 0.6         # at its lowest point (on/near the ground)
+            if descended and settled and last_up is not None and abs(up - last_up) < 0.25:
                 settle += 1
-                if settle >= 12:
+                if settle >= 12:                 # ~6 s motionless on the pad
                     try:
                         await self.d.action.disarm()
                     except Exception:
