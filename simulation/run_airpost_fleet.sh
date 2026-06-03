@@ -38,7 +38,7 @@ cleanup() {
     kill "$PARCEL_PID" 2>/dev/null || true
   fi
   pkill -x px4 2>/dev/null
-  for p in "gz sim" "fleet_demo.py" "fleet_service.py" "mavsdk_server" "apriltag_detector.py" "parcel_fleet.py"; do
+  for p in "gz sim" "fleet_demo.py" "fleet_service.py" "mavsdk_server" "apriltag_detector.py" "parcel_fleet.py" "station_iot.py"; do
     pkill -f "$p" 2>/dev/null
   done
   rm -f /tmp/airpost_land_target_* /tmp/airpost_winch_go_* /tmp/airpost_winch_done_* 2>/dev/null
@@ -128,6 +128,15 @@ for i in range($N):
     PARCEL_PID=$!
   else
     echo ">> parcel winch fleet manager not started (missing detector venv)"
+  fi
+  # Station/drone IoT: self-register this run's $N drones with the backend and prune any drone the
+  # backend still lists that is NOT in the running fleet (so a backend seeded for 8 drones doesn't
+  # leave phantoms when the fleet is smaller), plus stream station GPS/temp/humidity/light sensors.
+  if [ -x "$SIMDIR/.venv-detector/bin/python" ] || [ -x "$PX4/.venv/bin/python" ]; then
+    IOT_PY="$PX4/.venv/bin/python"; [ -x "$IOT_PY" ] || IOT_PY="$SIMDIR/.venv-detector/bin/python"
+    echo ">> starting station/drone IoT (self-register $N drones, prune phantoms, stream sensors)"
+    DRONES="$N" KAFKA_BROKER="${KAFKA_BROKER:-127.0.0.1:9092}" \
+      "$IOT_PY" "$SIMDIR/station_iot.py" >/tmp/airpost_station_iot.log 2>&1 &
   fi
   echo ">> MQTT delivery service (broker ${MQTT_BROKER:-127.0.0.1}); register orders in the UI/API"
   MQTT_BROKER="${MQTT_BROKER:-127.0.0.1}" python3 "$SIMDIR/fleet_service.py" "$N"

@@ -31,6 +31,9 @@ TELE = float(os.environ.get("TELE", "3"))
 DARK = os.environ.get("DARK", "0") == "1"
 LIGHT_ON_LUX = 50.0   # below this the pad lamp switches on so the tag stays visible
 SINK_STATION = 2
+SINK_DRONE = 1
+DRONE_ID_BASE = 50    # fleet instance i -> backend drone id 51+i (matches fleet_service routing)
+DRONES = int(os.environ.get("DRONES", "0"))   # number of drones in the running fleet (0 = leave as is)
 ORIGIN_LAT, ORIGIN_LON, EARTH_R = 37.5, 127.0, 6371000.0
 
 
@@ -53,6 +56,51 @@ def login():
     return _post("/auth/login", {"email": ADMIN, "password": PASSWORD})["token"]
 
 
+def _get(path, token):
+    req = urllib.request.Request(API + path, headers={"Authorization": "Bearer " + token})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        return json.loads(r.read().decode() or "[]")
+
+
+def _delete(path, token):
+    req = urllib.request.Request(API + path, method="DELETE",
+                                 headers={"Authorization": "Bearer " + token})
+    urllib.request.urlopen(req, timeout=10).read()
+
+
+def sync_drones(token):
+    """Make the backend's drone fleet match the SIM exactly: self-register the running fleet's drones
+    (id 51+i, attached to station i+1 — the same routing fleet_service uses) and prune any drone the
+    backend still lists that is NOT in the running fleet (e.g. hardcoded-seed phantoms). This is the
+    IoT model: a drone exists in the backend iff it is actually online."""
+    if DRONES <= 0:
+        return
+    st = {s["id"]: s for s in json.load(open(SITES))["stations"]}
+    wanted = set(range(DRONE_ID_BASE + 1, DRONE_ID_BASE + 1 + DRONES))
+    existing = {n["id"] for n in (_get(f"/regist/node/{SINK_DRONE}", token) or [])}
+    for did in existing - wanted:
+        try:
+            _delete(f"/regist/node/{did}", token)
+            print(f"drone IoT: pruned phantom drone {did} (not in the running fleet)", flush=True)
+        except Exception as e:
+            print(f"drone IoT: prune {did} failed: {e}", flush=True)
+    for i in range(DRONES):
+        did = DRONE_ID_BASE + 1 + i
+        if did in existing:
+            continue
+        sid = i + 1
+        s = st.get(sid)
+        if not s:
+            continue
+        lat, lon = en_to_latlon(s["E"], s["N"])
+        try:
+            _post("/regist/node", {"id": did, "name": f"drone-{sid}", "type": f"DRO-{sid}",
+                                   "lat": lat, "lng": lon, "alt": s.get("Z", 0.0), "sink_id": SINK_DRONE}, token)
+            print(f"drone IoT: self-registered drone {did} @ station {sid}", flush=True)
+        except Exception as e:
+            print(f"drone IoT: register {did} failed: {e}", flush=True)
+
+
 def ambient_lux(t):
     """Simulated ambient light: a slow day/night cycle (or forced dark). Real stations would read a
     photoresistor here."""
@@ -73,12 +121,19 @@ def main():
             # type "STA" is the backend's station contract: RegistNode persists it AND attaches the
             # night-LED logic (light sensor in the dark range -> "LED ON" actuator), exactly the
             # "turn the pad light on when dark" behaviour.
-            n = _post("/regist/node", {"name": f"station-{s['id']}", "type": "STA",
-                                       "lat": lat, "lng": lon, "alt": alt, "sink_id": SINK_STATION}, token)
-            devices.append((s["id"], n.get("id", s["id"]), lat, lon, alt))
+            # Register with the EXPLICIT sim station id so the backend node id == the id the sim and
+            # MQTT contract use (takeoff_id/landing_id) — otherwise the geometric landing picks a
+            # backend id the sim can't resolve. Stations already seeded (1..8) just conflict here
+            # (harmless); the rest of the generated field (0, 9..39) is added so the admin map shows
+            # the whole world.
+            _post("/regist/node", {"id": s["id"], "name": f"station-{s['id']}", "type": "STA",
+                                   "lat": lat, "lng": lon, "alt": alt, "sink_id": SINK_STATION}, token)
+            devices.append((s["id"], s["id"], lat, lon, alt))
         except Exception as e:
             print(f"station {s['id']} register failed: {e}", flush=True)
     print(f"station IoT: {len(devices)} stations self-registered with the backend", flush=True)
+
+    sync_drones(token)   # make the backend drone fleet match the running sim (no phantoms)
 
     try:
         from confluent_kafka import Producer
