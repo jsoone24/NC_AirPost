@@ -23,6 +23,8 @@ Where the project is today and where it can go. Status legend: ✅ done · 🔶 
     OFFBOARD the companion owns avoidance — by PX4's design).
 - ✅ **CI on every repo**: Drone (ros:humble build), Backend (Go), UI (npm), Sink/Station (py), and
   the umbrella (Go+npm+sim).
+- ✅ **Docs site**: a MkDocs (Material) site in `docs/` builds `--strict` and deploys to GitHub Pages
+  via `.github/workflows/docs.yml` (enable once: repo Settings → Pages → Source: GitHub Actions).
 - 🔶 Precision-landing **accuracy** is centimetre-level when vision tracks continuously, but not yet
   *consistent* every flight (occasional ~0.7 m). **Hardening this is item #1 below.**
 - ⬜ Real-hardware flight of the full loop (the sim mirrors it, but it hasn't flown on the real drone end-to-end).
