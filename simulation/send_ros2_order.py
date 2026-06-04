@@ -39,7 +39,7 @@ def main():
     order = {
         "cruise": CRUISE,
         "winch_height": WINCH_HEIGHT,
-        "precland_alt": 6.0,
+        "precland_alt": 3.0,           # descend to 3 m over the station tag, then vision precision-land
         # NED offset (north, east) from the takeoff station to the drop pad — the PX4 local frame.
         "deliver_ned": [site["N"] - station["N"], site["E"] - station["E"]],
         # gz world drop-pad centre [E, N, parcel-rest-height] so the winch slides the parcel onto it.
