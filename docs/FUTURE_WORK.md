@@ -44,8 +44,10 @@ to the loopback and hit per-namespace discovery flakiness):
   directly to `drone_node`; finish the picture by having the dispatcher publish the ROS 2 order
   (`deliver_ned` / `deliver_world` / `landing_world`, as `send_ros2_order.py` computes) to
   `command/downlink/ActuatorReq/<id>` so the backend drives `drone_node` directly, end to end.
-- ⬜ **Merge `catkin_ws` + `catkin_ws_build`** and finish the legacy ROS 1 submodule layout on the
-  `noetic` branch (kept for reference; the active path is ROS 2 on `main`).
+- ✅ **Merged `catkin_ws` + `catkin_ws_build`** into one ROS 1 workspace on the `noetic` branch, with
+  all five packages (drone_controller, realsense-ros, ros_comm, vision_to_mavros, apriltag_ros) as
+  proper SSU-NC-22 submodules (the forks' `airpost` branches hold the in-use versions). `main`/`humble`
+  are now ROS 2-only (`ros2_ws`); the ROS 1 workspace lives on `noetic`.
 
 Reproduce on Linux: install ros-humble + px4_msgs (release/1.17), build `airpost_drone`, run the
 Micro-XRCE-DDS Agent, then `./run_ros2_fleet.sh N`. See `AirPost_Drone/README.md`.
