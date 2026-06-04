@@ -34,12 +34,29 @@ export ROS_DOMAIN_ID=0
 export FASTRTPS_DEFAULT_PROFILES_FILE="$PROFILE" FASTDDS_DEFAULT_PROFILES_FILE="$PROFILE"
 
 BUILD="$PX4_DIR/build/px4_sitl_default"
-run() { micromamba run -n "$ROS_ENV" bash -c "$1"; }
+DETPY="$SIMDIR/.venv-detector/bin/python"   # detector venv (gz python bindings live here)
+# gz python bindings are compiled per CPython version — pick the set matching the detector venv's
+# python (else `import gz.transport13._transport` fails and parcel_fleet/winch never signals done).
+GZPV=$("$DETPY" -c 'import sys;print(f"python{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null)
+GZP=$(ls -d /opt/homebrew/Cellar/gz-transport*/*/lib/$GZPV/site-packages 2>/dev/null | head -1)
+GZM=$(ls -d /opt/homebrew/Cellar/gz-msgs*/*/lib/$GZPV/site-packages 2>/dev/null | head -1)
+
+# Same precision-landing setup as run_airpost_fleet.sh: set the LTEST/PLD params through the px4-param
+# CLIENT (a MAVLink PARAM_SET corrupts INT32 params) and start the landing_target_estimator that rcS
+# does not autostart. AUTO.PRECLAND (commanded by drone_node over DDS) then centres on the tag.
+configure_precland_instance() {
+  inst="$1"
+  for kv in "LTEST_MODE 1" "LTEST_SENS_ROT 2" "LTEST_MEAS_UNC 0.05" "PLD_MAX_SRCH 0" "PLD_SRCH_TOUT 0.0"; do
+    "$BUILD/bin/px4-param" --instance "$inst" set $kv >/dev/null 2>&1 || true
+  done
+  "$BUILD/bin/px4-landing_target_estimator" --instance "$inst" start \
+    >>"$BUILD/instance_$inst/out.log" 2>>"$BUILD/instance_$inst/err.log" || true
+}
 
 cleanup() {
   pkill -f MicroXRCEAgent 2>/dev/null
   pkill -f "airpost_drone" 2>/dev/null; pkill -f dummy_camera 2>/dev/null; pkill -f drone_node 2>/dev/null
-  pkill -f gcs_link.py 2>/dev/null
+  pkill -f gcs_link.py 2>/dev/null; pkill -f apriltag_detector.py 2>/dev/null; pkill -f parcel_fleet.py 2>/dev/null
   pkill -x px4 2>/dev/null; pkill -f "gz sim" 2>/dev/null
 }
 trap cleanup EXIT INT TERM
@@ -81,11 +98,36 @@ s=st[$i + 1]; print(f\"{s['E']},{s['N']},{round(s['Z']+0.55,2)},0,0,0\")")
 done
 sleep 12
 
-# 3) ground-station heartbeat (enables autonomous DDS-offboard arming without QGroundControl).
+# 3) precision landing: configure each PX4 + start its per-drone AprilTag detector (streams
+#    LANDING_TARGET to PX4 over MAVLink, gated ON only during the landing window), and the parcel
+#    winch manager that lowers/animates the parcel in gz. (Skipped if the detector venv/gz bindings
+#    are absent — flights still run, landing falls back to plain AUTO.LAND.)
+if [ -x "$DETPY" ] && [ -n "$GZP" ] && [ -n "$GZM" ]; then
+  echo ">> starting $N precision-landing detector(s) + parcel winch manager"
+  for i in $(seq 0 $((N - 1))); do
+    configure_precland_instance "$i"
+    read -r hn he sid mz <<<"$(python3 -c "
+import json
+s={x['id']: x for x in json.load(open('$SIMDIR/tests/airpost_sites.json'))['stations']}[$i + 1]
+print(s['N'], s['E'], s['id'], s.get('marker_z', s.get('Z', 0.0)))")"
+    echo "$hn $he $sid $mz" > "/tmp/airpost_land_target_$i"   # drone returns to its own station
+    GZ_IP=127.0.0.1 PYTHONPATH="$GZP:$GZM" AIRPOST_MODEL="airpost_delivery_drone_$i" \
+      TARGET_ID="$sid" LAND_TARGET_FILE="/tmp/airpost_land_target_$i" \
+      MAV_URL="udpout:127.0.0.1:$((18570 + i))" LANDING_FLAG="/tmp/airpost_landing_active_$i" \
+      "$DETPY" "$SIMDIR/tests/apriltag_detector.py" >"/tmp/airpost_det_$i.log" 2>&1 &
+  done
+  GZ_IP=127.0.0.1 PYTHONPATH="$GZP:$GZM" \
+    "$DETPY" "$SIMDIR/parcel_fleet.py" --n-drones "$N" --world airpost \
+    >/tmp/airpost_parcel_fleet.log 2>&1 &
+else
+  echo ">> precision-landing detectors/parcel manager skipped (no detector venv / gz python bindings)"
+fi
+
+# 4) ground-station heartbeat (enables autonomous DDS-offboard arming without QGroundControl).
 echo ">> starting gcs_link (ground-station heartbeat)"
 nohup "$PX4_DIR/.venv/bin/python3" "$SIMDIR/gcs_link.py" "$N" >/tmp/airpost_gcs_link.log 2>&1 &
 
-# 4) the REAL ROS 2 drone stack: one drone_node + dummy_camera per drone.
+# 5) the REAL ROS 2 drone stack: one drone_node + dummy_camera per drone.
 echo ">> launching $N airpost_drone ROS 2 node(s)"
 for i in $(seq 0 $((N - 1))); do
   k=$((i + 1))
@@ -99,7 +141,17 @@ for i in $(seq 0 $((N - 1))); do
   echo "   ROS2 drone_node $i: PX4_NS=${NS:-<root>} DRO$((51 + i))"
 done
 
-echo ">> integrated ROS 2 stack up. Telemetry on data/DRO51.. ; send delivery orders to"
-echo "   command/downlink/ActuatorReq/DRO<id> (the backend dispatcher does this in production)."
-echo "   Ctrl-C to stop everything."
+# 6) optionally fire a real delivery order per drone (the backend dispatcher does this in production):
+#    takeoff station -> drop pad (winch at 10 m) -> back to the station -> precision-land on its tag.
+if [ "${ORDER:-0}" = "1" ]; then
+  sleep 10
+  echo ">> sending built-in delivery order(s)"
+  for i in $(seq 0 $((N - 1))); do
+    micromamba run -n "$ROS_ENV" python3 "$SIMDIR/send_ros2_order.py" "$i" >/tmp/airpost_order_$i.log 2>&1 || true
+  done
+fi
+
+echo ">> integrated ROS 2 stack up. Telemetry on data/DRO51.. ; send a delivery order with"
+echo "   python3 send_ros2_order.py <instance>   (or re-run with ORDER=1 to auto-send)."
+echo "   Mission: station takeoff -> drop pad (winch @10 m) -> return -> precision-land. Ctrl-C to stop."
 wait
