@@ -31,6 +31,10 @@ COLCON_WS="${COLCON_WS:-$HOME/airpost_ros2_ws}"
 PROFILE="$SIMDIR/fastdds_localhost.xml"
 export MQTT_BROKER_HOST="${MQTT_BROKER_HOST:-127.0.0.1}"
 export ROS_DOMAIN_ID=0
+# Pin every ROS 2 node to Fast-DDS so the localhost discovery profile applies uniformly — otherwise a
+# node may default to CycloneDDS, which ignores the profile and floods the LAN interface (and the
+# ros2<->ros2 obstacle topic never matches locally on macOS).
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 export FASTRTPS_DEFAULT_PROFILES_FILE="$PROFILE" FASTDDS_DEFAULT_PROFILES_FILE="$PROFILE"
 
 BUILD="$PX4_DIR/build/px4_sitl_default"
@@ -135,10 +139,12 @@ for i in $(seq 0 $((N - 1))); do
   nohup micromamba run -n "$ROS_ENV" bash -c "
     source '$COLCON_WS/install/setup.bash'
     export PX4_NS=$NS DRONE_INSTANCE=$i DRONE_ID=DRO$((51 + i)) CAMERA_TOPIC=$CAM
+    export OBSTACLES='${OBSTACLES:-}' OBSTACLE_TOPIC=/airpost/obstacle_distance_$i
     ros2 run airpost_drone dummy_camera &
+    ros2 run airpost_drone obstacle_sensor &
     ros2 run airpost_drone drone_node" \
     >"/tmp/airpost_ros2_drone_$i.log" 2>&1 &
-  echo "   ROS2 drone_node $i: PX4_NS=${NS:-<root>} DRO$((51 + i))"
+  echo "   ROS2 drone_node $i: PX4_NS=${NS:-<root>} DRO$((51 + i)) obstacles='${OBSTACLES:-none}'"
 done
 
 # 6) optionally fire a real delivery order per drone (the backend dispatcher does this in production):
