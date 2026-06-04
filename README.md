@@ -144,7 +144,7 @@ This umbrella repo pulls every part together as submodules. Clone with `--recurs
 | [`simulation/`](./simulation/README.md) | **The physics simulation** — flies the whole mission (takeoff → winch → camera precision-land) for 1–N drones, no hardware needed. Start here to *see* it work. | PX4 SITL, Gazebo Harmonic, Python, MAVSDK |
 | [`AirPost_Backend/`](./AirPost_Backend) | **The brain.** Three Go services: `application` (REST API, routing, drone dispatch, MySQL), `logic-core` (Kafka consumer, rule engine, "delivered" email, Elasticsearch sink), `health-check` (WebSocket live-tracking). | Go, Gin, GORM, MySQL |
 | [`AirPost_UI/`](./AirPost_UI) | **The web app.** Operator dashboard (manage drones/stations/tags, see health), parcel registration, and the live tracking map. | React, Vite, TypeScript |
-| [`AirPost_Drone/`](./AirPost_Drone) | **On-drone IoT + control.** Raspberry-Pi sensor node (GPS, camera, temp/humidity/light) and the autopilot command bridge. | Python/ROS, MAVSDK/MAVROS |
+| [`AirPost_Drone/`](./AirPost_Drone) | **On-drone control (ROS 2).** The `airpost_drone` ROS 2 node that flies PX4 v1.17 over the native uXRCE-DDS bridge (telemetry, OFFBOARD delivery, winch) + a realsense-swappable camera node. (`noetic` branch keeps the legacy ROS 1/MAVROS controller.) | Jetson, ROS 2 Humble, px4_msgs, uXRCE-DDS |
 | [`AirPost_Station/`](./AirPost_Station) | **Station IoT.** A landing station's sensors and its pad **lamp** (turns on in the dark so the camera can still read the tag). | Python, Raspberry Pi |
 | [`AirPost_Sink/`](./AirPost_Sink) | **The data bridge.** Forwards device telemetry from MQTT into Kafka. | Go/Python |
 | [`docker-elasticsearch-kibana/`](./docker-elasticsearch-kibana) | Standalone Elasticsearch + Kibana compose (telemetry storage & dashboards). | Docker |
@@ -191,6 +191,22 @@ them live and a "delivered" email shows up in MailHog. Full step-by-step: [`docs
 > The deep simulator guide (how multi-drone, collision-avoidance, the winch, and AprilTag precision
 > landing actually work, plus the ground-truth verifier) is in **[`simulation/README.md`](./simulation/README.md)**.
 
+#### Fly the *real on-drone ROS 2 code* (uXRCE-DDS, not the host service)
+
+`run_airpost_fleet.sh` flies the drones from a host-side **MAVSDK** service — great for the
+precision-landing demo. To instead exercise the **actual code that ships on the aircraft** — the
+`airpost_drone` ROS 2 node talking to PX4 over the native **uXRCE-DDS** bridge, exactly as on the
+Jetson+Pixhawk — use:
+
+```bash
+cd ../simulation
+./run_ros2_fleet.sh 1     # Micro-XRCE-DDS Agent + PX4/gz + drone_node + dummy_camera + GCS heartbeat
+```
+
+This brings up the real ROS 2 graph; an MQTT delivery order then makes the drone arm, take off, fly to
+the drop, winch, and land — while it streams PX4's own telemetry on `data/DRO51`. See
+[`AirPost_Drone`](./AirPost_Drone/README.md) for the architecture and the realsense-camera swap.
+
 **Tear down:** `docker compose -f AirPost_Backend/docker-compose.yml down` (add `-v` to wipe data).
 
 ---
@@ -204,11 +220,16 @@ the whole stack above the autopilot is correct.
 ```
               +------------ UI + Backend + Kafka/ES (identical) ------------+
               |                                                             |
-  REAL  ----->|  MQTT order -> AirPost_Drone (Raspberry Pi + Pixhawk) ----->|  real flight
-  SIM   ----->|  MQTT order -> simulation/fleet_service.py -> PX4+Gazebo -->|  simulated flight
-              |                                                             |
+  REAL  ----->|  MQTT order -> AirPost_Drone ROS2 node --uXRCE-DDS--> PX4 ->|  real flight
+  SIM   ----->|  MQTT order -> the SAME ROS2 node --uXRCE-DDS--> PX4+Gazebo>|  simulated flight
+              |                          (run_ros2_fleet.sh)                |
               +-------------------------------------------------------------+
 ```
+
+The on-drone software (`AirPost_Drone`, branch `main`) is **ROS 2 Humble** talking to **PX4 v1.17**
+over uXRCE-DDS — and the simulator runs that *same* node, so a green sim run means the real flight code
+is correct, not just a stand-in. (`simulation/fleet_service.py` is a separate host-side MAVSDK driver
+kept for the multi-drone precision-landing demo.)
 
 ---
 
@@ -218,6 +239,10 @@ The end-to-end loop is verified **in simulation**, measured against the simulato
 (its exact physics positions), not the drone's own estimate:
 
 - ✅ UI/API order → nearest free drone assigned → mission flown → live tracking + "delivered" email.
+- ✅ **Real on-drone ROS 2 stack flies over uXRCE-DDS:** the actual `airpost_drone` ROS 2 node drives
+  PX4 v1.17 over the native DDS bridge (arm → takeoff → waypoint → winch-drop → land) from an MQTT
+  order, streaming PX4's *own* telemetry to `data/<id>` → Sink → Kafka — the same code that runs on the
+  Jetson+Pixhawk, verified end-to-end in SITL (`simulation/run_ros2_fleet.sh`).
 - ✅ **Parcel placement:** rests **on the red drop-pad** (centre, ~0–5 cm) every run, including 4 drones at once.
 - ✅ **Multi-drone, no collisions:** altitude bands + hold-to-the-side; verified with 4 concurrent sorties.
 - ✅ **Camera precision landing works:** a 4-drone batch landed all four **on the tag centre within 1–2 cm** (ground truth).
@@ -233,8 +258,9 @@ The end-to-end loop is verified **in simulation**, measured against the simulato
 
 | Choice | Why |
 |---|---|
-| **PX4 v1.17 + Gazebo Harmonic** | industry-standard open autopilot + physics; the same MAVLink/PX4 the real Pixhawk runs, so sim ≈ reality |
-| **MAVSDK** | clean async API to command the autopilot from Python |
+| **PX4 v1.17 + Gazebo Harmonic** | industry-standard open autopilot + physics; the same PX4 the real Pixhawk runs, so sim ≈ reality |
+| **ROS 2 Humble + uXRCE-DDS (px4_msgs)** | PX4 v1.17's native ROS 2 interface — the on-drone code subscribes the autopilot's own topics and commands OFFBOARD over DDS; identical on SITL and the Jetson+Pixhawk (no MAVROS shim) |
+| **MAVSDK** | clean async API for the host-side multi-drone precision-landing demo driver |
 | **Go (Gin + GORM)** | small, fast, statically-typed services that are easy to containerise |
 | **MQTT (mosquitto)** | lightweight pub/sub — the natural fit for "send one flight order to a drone" |
 | **Kafka → Elasticsearch → Kibana** | durable high-throughput telemetry stream + searchable storage + dashboards |
