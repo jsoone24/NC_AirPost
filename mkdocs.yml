@@ -1,0 +1,43 @@
+site_name: AirPost
+site_description: Autonomous drone parcel delivery — system guide
+site_author: SSU NC-Lab
+# Set to your GitHub Pages URL once enabled (Settings → Pages → source: GitHub Actions):
+site_url: https://jsoone24.github.io/NC_AirPost/
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      toggle: { icon: material/weather-night, name: Dark }
+    - scheme: slate
+      primary: indigo
+      toggle: { icon: material/weather-sunny, name: Light }
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - toc.integrate
+
+nav:
+  - Overview: index.md
+  - Run it (operations): RUNBOOK.md
+  - Roadmap: FUTURE_WORK.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - tables
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+plugins:
+  - search
+# Mermaid renders via the superfences custom fence above (Material's built-in support) — no extra plugin.
+
+# docs_dir is `docs/` (holds index.md, RUNBOOK.md, FUTURE_WORK.md). The deep component docs live in
+# each repo's README on GitHub and are linked from the Overview, to avoid duplicating content.
+docs_dir: docs

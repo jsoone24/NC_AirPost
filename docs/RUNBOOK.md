@@ -5,14 +5,14 @@
 
 Everything except the flight simulator runs in containers. The simulator (PX4 SITL +
 Gazebo) runs natively because it needs a GL/GPU context — see
-[`../simulation/README.md`](../simulation/README.md). The sim and the backend meet on the
+[`simulation/README.md`](https://github.com/jsoone24/NC_AirPost/blob/main/simulation/README.md). The sim and the backend meet on the
 same MQTT broker (`mosquitto:1883`) using the contract in that README.
 
 ## 0. Prerequisites
 
 - Docker + Docker Compose v2.
 - For the real flight: PX4 v1.17 SITL + Gazebo Harmonic built per
-  [`../simulation/PX4_MACOS_BUILD.md`](../simulation/PX4_MACOS_BUILD.md), plus the
+  [`simulation/PX4_MACOS_BUILD.md`](https://github.com/jsoone24/NC_AirPost/blob/main/simulation/PX4_MACOS_BUILD.md), plus the
   `mosquitto_pub`/`mosquitto_sub` CLI.
 
 ## 1. Bring up the whole stack
