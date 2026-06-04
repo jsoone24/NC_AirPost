@@ -670,5 +670,56 @@ async def serve(n):
     await asyncio.Event().wait()
 
 
+async def serve_standalone(n):
+    """STANDALONE delivery demo: fly N drones a full parcel delivery WITHOUT the backend, UI, MySQL,
+    Kafka or even an MQTT broker. Builds its own orders and calls the same verified Drone.fly() the
+    MQTT service uses, so it exercises the real mission (takeoff -> winch onto the drop pad -> AprilTag
+    precision landing) and collision avoidance. Run it via ./deliver.sh — the easy "just the drone
+    delivery" harness for both single (n=1) and multi (n>1) drones."""
+    st, sites = load_sites()
+    drones = [Drone(i, st[i + 1]["N"], st[i + 1]["E"], st[i + 1].get("Z", 0.0)) for i in range(n)]
+    tasks = []
+    for dr in drones:
+        tasks.append(asyncio.create_task(dr.connect()))
+        await asyncio.sleep(2)
+    await asyncio.gather(*tasks)
+    flyable = sum(dr.ready_ok for dr in drones)
+    print(f"STANDALONE demo: {n} drone(s) connected ({flyable} flyable); flying built-in deliveries", flush=True)
+
+    station_ids = sorted(st.keys())
+
+    async def one(i):
+        dr = drones[i]
+        if not dr.ready_ok:
+            print(f"drone {i}: not flyable, skipping", flush=True)
+            return
+        takeoff = i + 1
+        # land at a DIFFERENT station (cyclic) so it's a real ferry+land; distinct cruise band per
+        # drone so two never share an altitude (collision avoidance, same idea as the dispatcher).
+        landing = station_ids[(i + 1) % len(station_ids)]
+        req = {
+            "order_id": f"DEMO{i}", "drone_id": DRONE_ID_BASE + 1 + i,
+            "takeoff_id": takeoff, "pickup_id": takeoff,
+            "deliver_N": 0.0, "deliver_E": 0.0,   # snap to the nearest drop site to the pickup
+            "landing_id": landing, "cruise": 30.0 + i * 6.0,
+        }
+
+        def pub(state, **kw):
+            print(f"[DEMO{i}] {state} {kw}", flush=True)
+
+        async with dr.lock:
+            try:
+                await dr.fly(req, st, sites, pub)
+            except Exception as e:
+                print(f"drone {i}: sortie error {e!r}", flush=True)
+
+    await asyncio.gather(*[one(i) for i in range(len(drones))])
+    print("STANDALONE demo: all sorties finished", flush=True)
+
+
 if __name__ == "__main__":
-    asyncio.run(serve(int(sys.argv[1]) if len(sys.argv) > 1 else 2))
+    n = int(sys.argv[1]) if len(sys.argv) > 1 else 2
+    if os.environ.get("STANDALONE") == "1":
+        asyncio.run(serve_standalone(n))
+    else:
+        asyncio.run(serve(n))

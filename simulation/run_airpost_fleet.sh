@@ -112,6 +112,9 @@ done <<< "$poses"
 # (fleet_service.py: waits for backend orders and flies them); default runs the self-contained
 # fleet_demo.py that just proves all N drones take off, hover and land together.
 echo "   waiting for $N drones to boot..."; sleep 20
+# DEMO=1 (standalone delivery harness) implies the SERVICE path so the detectors + winch + the flight
+# program all start; it just runs them in STANDALONE mode (built-in orders, no backend/MQTT).
+[ "${DEMO:-0}" = "1" ] && SERVICE=1
 if [ "${SERVICE:-0}" = "1" ]; then
   GZP=$(ls -d /opt/homebrew/Cellar/gz-transport13/*/lib/python3.14/site-packages 2>/dev/null | head -1)
   GZM=$(ls -d /opt/homebrew/Cellar/gz-msgs10/*/lib/python3.14/site-packages 2>/dev/null | head -1)
@@ -154,17 +157,23 @@ for i in range($N):
   else
     echo ">> parcel winch fleet manager not started (missing detector venv)"
   fi
-  # Station/drone IoT: self-register this run's $N drones with the backend and prune any drone the
-  # backend still lists that is NOT in the running fleet (so a backend seeded for 8 drones doesn't
-  # leave phantoms when the fleet is smaller), plus stream station GPS/temp/humidity/light sensors.
-  if [ -x "$SIMDIR/.venv-detector/bin/python" ] || [ -x "$PX4/.venv/bin/python" ]; then
+  # Station/drone IoT: self-register this run's $N drones with the backend and prune phantoms, plus
+  # stream sensors. SKIPPED in DEMO mode (the standalone delivery harness needs no backend at all).
+  if [ "${DEMO:-0}" != "1" ] && { [ -x "$SIMDIR/.venv-detector/bin/python" ] || [ -x "$PX4/.venv/bin/python" ]; }; then
     IOT_PY="$PX4/.venv/bin/python"; [ -x "$IOT_PY" ] || IOT_PY="$SIMDIR/.venv-detector/bin/python"
     echo ">> starting station/drone IoT (self-register $N drones, prune phantoms, stream sensors)"
     DRONES="$N" KAFKA_BROKER="${KAFKA_BROKER:-127.0.0.1:9092}" \
       "$IOT_PY" "$SIMDIR/station_iot.py" >/tmp/airpost_station_iot.log 2>&1 &
   fi
-  echo ">> MQTT delivery service (broker ${MQTT_BROKER:-127.0.0.1}); register orders in the UI/API"
-  MQTT_BROKER="${MQTT_BROKER:-127.0.0.1}" python3 "$SIMDIR/fleet_service.py" "$N"
+  if [ "${DEMO:-0}" = "1" ]; then
+    # STANDALONE delivery demo: no backend / UI / MQTT broker — fleet_service builds its own orders.
+    echo ">> STANDALONE delivery demo ($N drone(s)): flying built-in deliveries, no backend needed"
+    STANDALONE=1 python3 "$SIMDIR/fleet_service.py" "$N"
+    echo "   delivery demo finished; Ctrl-C to stop the sim."
+  else
+    echo ">> MQTT delivery service (broker ${MQTT_BROKER:-127.0.0.1}); register orders in the UI/API"
+    MQTT_BROKER="${MQTT_BROKER:-127.0.0.1}" python3 "$SIMDIR/fleet_service.py" "$N"
+  fi
 else
   python3 "$SIMDIR/fleet_demo.py" "$N"
   echo "   fleet flight finished; Ctrl-C to stop the sim."

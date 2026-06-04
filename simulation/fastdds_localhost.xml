@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- Add 127.0.0.1 as a unicast initial peer so FastDDS PDP discovery reaches local participants
+     without multicast. On macOS, multicast (239.255.0.1) is routed off en0 and does not loop back
+     reliably, so the Micro-XRCE-DDS Agent and the ROS 2 nodes never discover each other by default.
+     Unicast initial peers to localhost makes them announce directly to each other on the well-known
+     PDP ports. Applied to BOTH the agent and ros2 via FASTRTPS_DEFAULT_PROFILES_FILE. Built-in
+     transports (SHM + UDPv4) are left on, so this is schema-compatible with FastDDS 2.6 and 2.14. -->
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <profiles>
+    <participant profile_name="localhost_only" is_default_profile="true">
+      <rtps>
+        <builtin>
+          <initialPeersList>
+            <locator><udpv4><address>127.0.0.1</address></udpv4></locator>
+          </initialPeersList>
+        </builtin>
+      </rtps>
+    </participant>
+  </profiles>
+</dds>
