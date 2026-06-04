@@ -138,6 +138,8 @@ for i in $(seq 0 $((N - 1))); do
   [ "$N" -gt 1 ] && { NS="px4_$k"; CAM="/px4_$k/camera/color/image_raw"; } || { NS=""; CAM="/camera/color/image_raw"; }
   nohup micromamba run -n "$ROS_ENV" bash -c "
     source '$COLCON_WS/install/setup.bash'
+    export ROS_DOMAIN_ID=0 RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+    export FASTRTPS_DEFAULT_PROFILES_FILE='$PROFILE' FASTDDS_DEFAULT_PROFILES_FILE='$PROFILE'
     export PX4_NS=$NS DRONE_INSTANCE=$i DRONE_ID=DRO$((51 + i)) CAMERA_TOPIC=$CAM
     export OBSTACLES='${OBSTACLES:-}' OBSTACLE_TOPIC=/airpost/obstacle_distance_$i
     ros2 run airpost_drone dummy_camera &
