@@ -54,13 +54,16 @@ sleep 3
 
 # 2) gz server + N PX4 instances, each with its OWN DDS namespace px4_<i+1>.
 export PATH="$PX4_DIR/.venv/bin:/opt/homebrew/bin:$PATH"
-export PX4_GZ_WORLD=airpost GST_REGISTRY_FORK=no GZ_IP=127.0.0.1 HEADLESS="${HEADLESS:-1}"; unset GZ_PARTITION
+export PX4_GZ_WORLD=airpost GST_REGISTRY_FORK=no GZ_IP=127.0.0.1; unset GZ_PARTITION
 export GZ_SIM_RESOURCE_PATH="$SIMDIR/gz/models:$SIMDIR/gz/worlds:$PX4_DIR/Tools/simulation/gz/models:$PX4_DIR/Tools/simulation/gz/worlds:${GZ_SIM_RESOURCE_PATH:-}"
 export GZ_SIM_SERVER_CONFIG_PATH="$PX4_DIR/src/modules/simulation/gz_bridge/server.config"
+[ "${GUI:-0}" = "1" ] || export HEADLESS=1
 python3 "$SIMDIR/gen_world.py" 40 20 airpost 0 baylands >/dev/null
-echo ">> starting gz server + $N PX4 instance(s)"
+echo ">> starting gz server + $N PX4 instance(s) (GUI=${GUI:-0})"
 gz sim -r -s "$SIMDIR/gz/worlds/airpost.sdf" >/tmp/airpost_ros2_gz.log 2>&1 &
 sleep 8
+# On macOS gz can't run server+GUI in one process; launch the GUI client separately when asked.
+[ "${GUI:-0}" = "1" ] && { gz sim -g >/tmp/airpost_ros2_gzgui.log 2>&1 & }
 # Single drone uses the un-namespaced /fmu/... topics (one autopilot, no collision). Multiple drones
 # need a per-instance DDS namespace (px4_<key>) so their topics don't overlap on the shared agent.
 for i in $(seq 0 $((N - 1))); do
